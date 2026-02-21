@@ -1,0 +1,9 @@
+{
+  "packages": {
+    "typescript": {
+      "release-type": "node",
+      "package-name": "@uverify/sdk",
+      "changelog-path": "CHANGELOG.md"
+    }
+  }
+}

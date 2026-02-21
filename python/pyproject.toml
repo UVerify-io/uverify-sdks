@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "uverify-sdk"
+version = "0.1.0"
+description = "Official Python SDK for the UVerify API"
+readme = "README.md"
+license = { text = "AGPL-3.0" }
+requires-python = ">=3.8"
+authors = [{ name = "UVerify", email = "hello@uverify.io" }]
+keywords = ["uverify", "cardano", "blockchain", "certificate", "verification"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "requests>=2.28.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-mock>=3.0",
+    "responses>=0.23",
+    "mypy>=1.0",
+    "types-requests",
+]
+
+[project.urls]
+Homepage = "https://uverify.io"
+Documentation = "https://docs.uverify.io"
+Repository = "https://github.com/UVerify-io/uverify-sdks"
+"Bug Tracker" = "https://github.com/UVerify-io/uverify-sdks/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["uverify_sdk*"]
+
+[tool.mypy]
+python_version = "3.8"
+strict = true
