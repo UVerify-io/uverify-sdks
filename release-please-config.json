@@ -4,6 +4,16 @@
       "release-type": "node",
       "package-name": "@uverify/sdk",
       "changelog-path": "CHANGELOG.md"
+    },
+    "java": {
+      "release-type": "maven",
+      "package-name": "uverify-sdk",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "python": {
+      "release-type": "python",
+      "package-name": "uverify-sdk",
+      "changelog-path": "CHANGELOG.md"
     }
   }
 }

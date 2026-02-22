@@ -3,7 +3,11 @@ package io.uverify.sdk;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.uverify.sdk.callback.DataSignature;
+import io.uverify.sdk.callback.MessageSignCallback;
+import io.uverify.sdk.callback.TransactionSignCallback;
 import io.uverify.sdk.exception.UVerifyException;
+import io.uverify.sdk.exception.UVerifyValidationException;
 import io.uverify.sdk.model.*;
 
 import java.io.IOException;
@@ -22,20 +26,33 @@ import java.util.Map;
 /**
  * Main entry point for the UVerify SDK.
  *
- * <p>Example usage:
+ * <p><strong>Certificate verification:</strong>
  * <pre>{@code
  * UVerifyClient client = new UVerifyClient();
- *
  * List<CertificateResponse> certs = client.verify("a3b4c5d6...");
  * certs.forEach(c -> System.out.println(c.getTransactionHash()));
  * }</pre>
  *
- * <p>To connect to a self-hosted instance:
+ * <p><strong>Issuing certificates (high-level helper):</strong>
  * <pre>{@code
  * UVerifyClient client = UVerifyClient.builder()
- *     .baseUrl("https://my-instance.example.com")
- *     .timeout(Duration.ofSeconds(60))
+ *     .signTx(unsignedTx -> myWallet.signTx(unsignedTx))
  *     .build();
+ *
+ * client.issueCertificates(
+ *     "addr1...",
+ *     List.of(new CertificateData("sha256-hash", "SHA-256"))
+ * );
+ * }</pre>
+ *
+ * <p><strong>Low-level access via {@code .core}:</strong>
+ * <pre>{@code
+ * BuildTransactionResponse resp = client.core.buildTransaction(
+ *     BuildTransactionRequest.defaultRequest("addr1...", "state-id",
+ *         new CertificateData("sha256-hash", "SHA-256"))
+ * );
+ * String witnessSet = myWallet.signTx(resp.getUnsignedTransaction());
+ * client.core.submitTransaction(resp.getUnsignedTransaction(), witnessSet);
  * }</pre>
  */
 public class UVerifyClient {
@@ -46,15 +63,47 @@ public class UVerifyClient {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final Map<String, String> defaultHeaders;
+    private final MessageSignCallback defaultSignMessage;
+    private final TransactionSignCallback defaultSignTx;
+
+    /**
+     * Low-level API access. Use when you need full control over the transaction lifecycle.
+     * For common workflows prefer the high-level helpers on this class.
+     */
+    public final UVerifyCore core;
 
     private UVerifyClient(Builder builder) {
         this.baseUrl = builder.baseUrl.replaceAll("/$", "");
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(builder.timeout)
-                .build();
+        this.httpClient = builder.httpClient != null
+                ? builder.httpClient
+                : HttpClient.newBuilder().connectTimeout(builder.timeout).build();
         this.objectMapper = new ObjectMapper()
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         this.defaultHeaders = Collections.unmodifiableMap(builder.headers);
+        this.defaultSignMessage = builder.signMessage;
+        this.defaultSignTx = builder.signTx;
+
+        this.core = new UVerifyCore() {
+            @Override
+            public BuildTransactionResponse buildTransaction(BuildTransactionRequest request) {
+                return buildTransactionInternal(request);
+            }
+
+            @Override
+            public void submitTransaction(String transaction, String witnessSet) {
+                submitTransactionInternal(transaction, witnessSet);
+            }
+
+            @Override
+            public UserActionRequestResponse requestUserAction(UserActionRequest request) {
+                return requestUserActionInternal(request);
+            }
+
+            @Override
+            public ExecuteUserActionResponse executeUserAction(ExecuteUserActionRequest request) {
+                return executeUserActionInternal(request);
+            }
+        };
     }
 
     // -------------------------------------------------------------------------
@@ -75,6 +124,9 @@ public class UVerifyClient {
         private String baseUrl = DEFAULT_BASE_URL;
         private Duration timeout = Duration.ofSeconds(30);
         private final Map<String, String> headers = new HashMap<>();
+        private MessageSignCallback signMessage;
+        private TransactionSignCallback signTx;
+        private HttpClient httpClient;
 
         private Builder() {}
 
@@ -90,9 +142,35 @@ public class UVerifyClient {
             return this;
         }
 
-        /** Add a default header to every request. */
+        /** Add a default header sent with every request. */
         public Builder header(String name, String value) {
             this.headers.put(name, value);
+            return this;
+        }
+
+        /**
+         * Set a default {@link MessageSignCallback} for the high-level helpers
+         * ({@code getUserInfo}, {@code invalidateState}, {@code optOut}).
+         */
+        public Builder signMessage(MessageSignCallback signMessage) {
+            this.signMessage = signMessage;
+            return this;
+        }
+
+        /**
+         * Set a default {@link TransactionSignCallback} for {@code issueCertificates}.
+         */
+        public Builder signTx(TransactionSignCallback signTx) {
+            this.signTx = signTx;
+            return this;
+        }
+
+        /**
+         * Inject a custom {@link HttpClient} (useful for testing).
+         * When set, the {@link #timeout} setting is ignored.
+         */
+        public Builder httpClient(HttpClient httpClient) {
+            this.httpClient = httpClient;
             return this;
         }
 
@@ -102,36 +180,36 @@ public class UVerifyClient {
     }
 
     // -------------------------------------------------------------------------
-    // Internal helpers
+    // Internal HTTP helpers
     // -------------------------------------------------------------------------
 
     private <T> T get(String path, Class<T> responseType) {
-        HttpRequest request = buildGetRequest(path);
-        return executeRequest(request, responseType);
+        return executeRequest(buildGetRequest(path), responseType);
     }
 
     private <T> T get(String path, TypeReference<T> responseType) {
-        HttpRequest request = buildGetRequest(path);
-        return executeRequest(request, responseType);
+        return executeRequest(buildGetRequest(path), responseType);
     }
 
     private <T> T post(String path, Object body, Class<T> responseType) {
-        HttpRequest request = buildPostRequest(path, body);
-        return executeRequest(request, responseType);
+        return executeRequest(buildPostRequest(path, body), responseType);
+    }
+
+    private <T> T post(String path, Object body, TypeReference<T> responseType) {
+        return executeRequest(buildPostRequest(path, body), responseType);
     }
 
     private void post(String path, Object body) {
-        HttpRequest request = buildPostRequest(path, body);
-        executeVoidRequest(request);
+        executeVoidRequest(buildPostRequest(path, body));
     }
 
     private HttpRequest buildGetRequest(String path) {
-        HttpRequest.Builder builder = HttpRequest.newBuilder()
+        HttpRequest.Builder b = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + path))
                 .GET()
                 .header("Accept", "application/json");
-        defaultHeaders.forEach(builder::header);
-        return builder.build();
+        defaultHeaders.forEach(b::header);
+        return b.build();
     }
 
     private HttpRequest buildPostRequest(String path, Object body) {
@@ -141,23 +219,18 @@ public class UVerifyClient {
         } catch (IOException e) {
             throw new UVerifyException("Failed to serialize request body", e);
         }
-        HttpRequest.Builder builder = HttpRequest.newBuilder()
+        HttpRequest.Builder b = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + path))
                 .POST(BodyPublishers.ofString(json))
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json");
-        defaultHeaders.forEach(builder::header);
-        return builder.build();
+        defaultHeaders.forEach(b::header);
+        return b.build();
     }
 
     private <T> T executeRequest(HttpRequest request, Class<T> responseType) {
         HttpResponse<String> response = sendRequest(request);
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new UVerifyException(
-                    "UVerify API error " + response.statusCode(),
-                    response.statusCode(),
-                    response.body());
-        }
+        checkStatus(response);
         String body = response.body();
         if (body == null || body.isBlank()) return null;
         try {
@@ -169,12 +242,7 @@ public class UVerifyClient {
 
     private <T> T executeRequest(HttpRequest request, TypeReference<T> responseType) {
         HttpResponse<String> response = sendRequest(request);
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new UVerifyException(
-                    "UVerify API error " + response.statusCode(),
-                    response.statusCode(),
-                    response.body());
-        }
+        checkStatus(response);
         String body = response.body();
         if (body == null || body.isBlank()) return null;
         try {
@@ -185,7 +253,10 @@ public class UVerifyClient {
     }
 
     private void executeVoidRequest(HttpRequest request) {
-        HttpResponse<String> response = sendRequest(request);
+        checkStatus(sendRequest(request));
+    }
+
+    private void checkStatus(HttpResponse<String> response) {
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             throw new UVerifyException(
                     "UVerify API error " + response.statusCode(),
@@ -204,20 +275,76 @@ public class UVerifyClient {
     }
 
     // -------------------------------------------------------------------------
+    // Callback resolution
+    // -------------------------------------------------------------------------
+
+    private MessageSignCallback resolveSignMessage(MessageSignCallback perCall) {
+        MessageSignCallback cb = perCall != null ? perCall : defaultSignMessage;
+        if (cb == null) {
+            throw new UVerifyValidationException(
+                    "A MessageSignCallback is required. Pass one to the method or set a " +
+                    "default via UVerifyClient.builder().signMessage(...).");
+        }
+        return cb;
+    }
+
+    private TransactionSignCallback resolveSignTx(TransactionSignCallback perCall) {
+        TransactionSignCallback cb = perCall != null ? perCall : defaultSignTx;
+        if (cb == null) {
+            throw new UVerifyValidationException(
+                    "A TransactionSignCallback is required. Pass one to the method or set a " +
+                    "default via UVerifyClient.builder().signTx(...).");
+        }
+        return cb;
+    }
+
+    // -------------------------------------------------------------------------
+    // Private low-level methods (exposed via .core)
+    // -------------------------------------------------------------------------
+
+    private BuildTransactionResponse buildTransactionInternal(BuildTransactionRequest request) {
+        return post("/api/v1/transaction/build", request, BuildTransactionResponse.class);
+    }
+
+    private void submitTransactionInternal(String transaction, String witnessSet) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("transaction", transaction);
+        if (witnessSet != null) body.put("witnessSet", witnessSet);
+        post("/api/v1/transaction/submit", body);
+    }
+
+    private UserActionRequestResponse requestUserActionInternal(UserActionRequest request) {
+        return post("/api/v1/user/request/action", request, UserActionRequestResponse.class);
+    }
+
+    private ExecuteUserActionResponse executeUserActionInternal(ExecuteUserActionRequest request) {
+        return post("/api/v1/user/state/action", request, ExecuteUserActionResponse.class);
+    }
+
+    private ExecuteUserActionResponse performUserStateAction(
+            String address,
+            UserActionRequest.UserAction action,
+            MessageSignCallback signMessage,
+            String stateId) {
+        UserActionRequest req = stateId != null
+                ? new UserActionRequest(address, action, stateId)
+                : new UserActionRequest(address, action);
+        UserActionRequestResponse requestResponse = requestUserActionInternal(req);
+        DataSignature sig = resolveSignMessage(signMessage).sign(requestResponse.getMessage());
+        ExecuteUserActionRequest execReq = new ExecuteUserActionRequest(
+                requestResponse, sig.getSignature(), sig.getKey());
+        return executeUserActionInternal(execReq);
+    }
+
+    // -------------------------------------------------------------------------
     // Certificate Verification
     // -------------------------------------------------------------------------
 
     /**
-     * Retrieve all on-chain certificates associated with the given data hash.
+     * Retrieve all on-chain certificates for the given data hash.
      *
      * @param hash SHA-256 or SHA-512 hex hash of the data to look up.
      * @return List of certificates; empty list if none found.
-     * @throws UVerifyException if the API returns an error.
-     *
-     * <pre>{@code
-     * List<CertificateResponse> certs = client.verify("a3b4c5d6...");
-     * certs.forEach(c -> System.out.println(c.getTransactionHash()));
-     * }</pre>
      */
     public List<CertificateResponse> verify(String hash) {
         List<CertificateResponse> result = get(
@@ -231,7 +358,6 @@ public class UVerifyClient {
      *
      * @param transactionHash 64-character hex transaction hash.
      * @param dataHash        SHA-256 or SHA-512 hex hash of the certified data.
-     * @return The matching certificate.
      */
     public CertificateResponse verifyByTransaction(String transactionHash, String dataHash) {
         return get(
@@ -240,242 +366,127 @@ public class UVerifyClient {
     }
 
     // -------------------------------------------------------------------------
-    // Transaction Management
+    // High-level helpers
     // -------------------------------------------------------------------------
 
     /**
-     * Build an unsigned transaction for certificate issuance or state management.
+     * Issue certificates using the bootstrap (new state) flow.
      *
-     * <p>The returned {@code unsignedTransaction} is a CBOR-hex encoded transaction
-     * that must be signed by the user's wallet before being submitted via
-     * {@link #submitTransaction(String)}.
-     *
-     * <pre>{@code
-     * BuildTransactionResponse response = client.buildTransaction(
-     *     BuildTransactionRequest.defaultRequest(
-     *         "addr1...",
-     *         "my-state-id",
-     *         new CertificateData("sha256-hash", "SHA-256")
-     *     )
-     * );
-     * String unsignedTx = response.getUnsignedTransaction();
-     * }</pre>
+     * @param address      Cardano address of the signer.
+     * @param certificates Certificates to issue.
+     * @param signTx       Wallet callback to sign the unsigned transaction.
      */
-    public BuildTransactionResponse buildTransaction(BuildTransactionRequest request) {
-        return post("/api/v1/transaction/build", request, BuildTransactionResponse.class);
+    public void issueCertificates(
+            String address,
+            List<CertificateData> certificates,
+            TransactionSignCallback signTx) {
+        issueCertificates(address, null, certificates, signTx);
     }
 
     /**
-     * Submit a signed transaction to the Cardano blockchain.
+     * Issue certificates using the bootstrap flow with the constructor-level callback.
      *
-     * @param transaction CBOR-hex encoded signed transaction.
+     * @throws UVerifyValidationException if no sign callback was configured.
      */
-    public void submitTransaction(String transaction) {
-        submitTransaction(transaction, null);
+    public void issueCertificates(String address, List<CertificateData> certificates) {
+        issueCertificates(address, null, certificates, null);
     }
 
     /**
-     * Submit a signed transaction with a separate witness set.
+     * Issue certificates into an existing state.
      *
-     * @param transaction CBOR-hex encoded signed transaction.
-     * @param witnessSet  Optional separate witness set in CBOR-hex.
+     * @param address      Cardano address of the signer.
+     * @param stateId      Existing state ID ({@code null} triggers bootstrap flow).
+     * @param certificates Certificates to issue.
+     * @param signTx       Wallet callback ({@code null} uses constructor-level default).
      */
-    public void submitTransaction(String transaction, String witnessSet) {
-        Map<String, Object> body = new HashMap<>();
-        body.put("transaction", transaction);
-        if (witnessSet != null) body.put("witnessSet", witnessSet);
-        post("/api/v1/transaction/submit", body);
-    }
-
-    // -------------------------------------------------------------------------
-    // User State Management
-    // -------------------------------------------------------------------------
-
-    /**
-     * Create a server-signed action request that the user must countersign.
-     *
-     * <p>This is step 1 of the two-step user-state-action flow.
-     * Pass the returned {@code message} to your wallet for signing, then call
-     * {@link #executeUserAction(ExecuteUserActionRequest)}.
-     *
-     * <pre>{@code
-     * UserActionRequestResponse req = client.requestUserAction(
-     *     new UserActionRequest("addr1...", UserActionRequest.UserAction.USER_INFO)
-     * );
-     * // Sign req.getMessage() with your CIP-30 wallet...
-     * }</pre>
-     */
-    public UserActionRequestResponse requestUserAction(UserActionRequest request) {
-        return post("/api/v1/user/request/action", request, UserActionRequestResponse.class);
+    public void issueCertificates(
+            String address,
+            String stateId,
+            List<CertificateData> certificates,
+            TransactionSignCallback signTx) {
+        TransactionSignCallback cb = resolveSignTx(signTx);
+        BuildTransactionRequest request = stateId != null
+                ? BuildTransactionRequest.defaultRequest(
+                        address, stateId, certificates.toArray(new CertificateData[0]))
+                : BuildTransactionRequest.bootstrapRequest(
+                        address, null, certificates.toArray(new CertificateData[0]));
+        BuildTransactionResponse response = buildTransactionInternal(request);
+        String witnessSet = cb.sign(response.getUnsignedTransaction());
+        submitTransactionInternal(response.getUnsignedTransaction(), witnessSet);
     }
 
     /**
-     * Execute a user state action using signatures from both parties.
+     * Issue certificates into an existing state using the constructor-level callback.
      *
-     * <p>This is step 2. Use the convenience constructor
-     * {@link ExecuteUserActionRequest#ExecuteUserActionRequest(UserActionRequestResponse, String, String)}
-     * to build the request from the first step's response.
+     * @throws UVerifyValidationException if no sign callback was configured.
      */
-    public Map<String, Object> executeUserAction(ExecuteUserActionRequest request) {
-        return post("/api/v1/user/state/action", request,
-                new TypeReference<Map<String, Object>>() {});
-    }
-
-    // -------------------------------------------------------------------------
-    // Connected Goods Extension
-    // -------------------------------------------------------------------------
-
-    /**
-     * Build an unsigned transaction to mint a batch of connected-goods tokens.
-     *
-     * <pre>{@code
-     * MintConnectedGoodsResponse resp = client.mintConnectedGoodsBatch(
-     *     new MintConnectedGoodsRequest(
-     *         "addr1...", "MY_ITEM",
-     *         new MintConnectedGoodsRequest.Item("secret1", "ITEM001"),
-     *         new MintConnectedGoodsRequest.Item("secret2", "ITEM002")
-     *     )
-     * );
-     * String batchId = resp.getBatchId();
-     * }</pre>
-     */
-    public MintConnectedGoodsResponse mintConnectedGoodsBatch(MintConnectedGoodsRequest request) {
-        return post("/api/v1/extension/connected-goods/mint/batch", request,
-                MintConnectedGoodsResponse.class);
-    }
-
-    /** Claim a connected-goods item using its password. */
-    public void claimConnectedGoodsItem(ClaimUpdateConnectedGoodsRequest request) {
-        post("/api/v1/extension/connected-goods/claim/item", request);
-    }
-
-    /** Update the social profile associated with a claimed item. */
-    public void updateConnectedGoodsItem(ClaimUpdateConnectedGoodsRequest request) {
-        post("/api/v1/extension/connected-goods/update/item", request);
+    public void issueCertificates(
+            String address, String stateId, List<CertificateData> certificates) {
+        issueCertificates(address, stateId, certificates, null);
     }
 
     /**
-     * Retrieve a connected-goods item.
+     * Retrieve the user's on-chain state (two-step signed action).
      *
-     * @param batchIds Comma-separated batch IDs.
-     * @param itemId   Item identifier within the batch.
+     * @param address     Cardano address of the user.
+     * @param signMessage Wallet callback to countersign the server's challenge.
      */
-    public Map<String, Object> getConnectedGoodsItem(String batchIds, String itemId) {
-        return get("/api/v1/extension/connected-goods/" + batchIds + "/" + itemId,
-                new TypeReference<Map<String, Object>>() {});
-    }
-
-    // -------------------------------------------------------------------------
-    // Transaction Service
-    // -------------------------------------------------------------------------
-
-    /** Retrieve all contract scripts used in a transaction. */
-    public List<Map<String, Object>> getTransactionScripts(String txHash) {
-        List<Map<String, Object>> result = get("/api/v1/txs/" + txHash + "/scripts",
-                new TypeReference<List<Map<String, Object>>>() {});
-        return result != null ? result : Collections.emptyList();
-    }
-
-    /** Retrieve redeemer data from a transaction. */
-    public List<Map<String, Object>> getTransactionRedeemers(String txHash) {
-        List<Map<String, Object>> result = get("/api/v1/txs/" + txHash + "/redeemers",
-                new TypeReference<List<Map<String, Object>>>() {});
-        return result != null ? result : Collections.emptyList();
-    }
-
-    // -------------------------------------------------------------------------
-    // Script Service
-    // -------------------------------------------------------------------------
-
-    /** Get basic information about a script. */
-    public Map<String, Object> getScript(String scriptHash) {
-        return get("/api/v1/scripts/" + scriptHash,
-                new TypeReference<Map<String, Object>>() {});
-    }
-
-    /** Get the JSON representation of a script. */
-    public Map<String, Object> getScriptJson(String scriptHash) {
-        return get("/api/v1/scripts/" + scriptHash + "/json",
-                new TypeReference<Map<String, Object>>() {});
-    }
-
-    /** Get detailed information about a script including its content. */
-    public Map<String, Object> getScriptDetails(String scriptHash) {
-        return get("/api/v1/scripts/" + scriptHash + "/details",
-                new TypeReference<Map<String, Object>>() {});
-    }
-
-    /** Get the CBOR encoding of a script. */
-    public Map<String, Object> getScriptCbor(String scriptHash) {
-        return get("/api/v1/scripts/" + scriptHash + "/cbor",
-                new TypeReference<Map<String, Object>>() {});
-    }
-
-    /** Get a datum by its hash. */
-    public Object getDatum(String datumHash) {
-        return get("/api/v1/scripts/datum/" + datumHash, Object.class);
-    }
-
-    /** Get the CBOR encoding of a datum by its hash. */
-    public Object getDatumCbor(String datumHash) {
-        return get("/api/v1/scripts/datum/" + datumHash + "/cbor", Object.class);
-    }
-
-    // -------------------------------------------------------------------------
-    // Library Controller
-    // -------------------------------------------------------------------------
-
-    /** Deploy a proxy contract for state management. */
-    public void deployProxy() {
-        post("/api/v1/library/deploy/proxy", Collections.emptyMap());
-    }
-
-    /** Upgrade an existing proxy contract. */
-    public void upgradeProxy(String params) {
-        post("/api/v1/library/upgrade/proxy", params);
-    }
-
-    /** List all current library deployments. */
-    public Object getDeployments() {
-        return get("/api/v1/library/deployments", Object.class);
+    public ExecuteUserActionResponse getUserInfo(String address, MessageSignCallback signMessage) {
+        return performUserStateAction(
+                address, UserActionRequest.UserAction.USER_INFO, signMessage, null);
     }
 
     /**
-     * Undeploy a specific contract.
+     * Retrieve the user's on-chain state using the constructor-level callback.
      *
-     * @param transactionHash Transaction hash of the deployment.
-     * @param outputIndex     Output index of the deployment UTXO.
+     * @throws UVerifyValidationException if no sign callback was configured.
      */
-    public Object undeployContract(String transactionHash, int outputIndex) {
-        return get("/api/v1/library/undeploy/" + transactionHash + "/" + outputIndex,
-                Object.class);
+    public ExecuteUserActionResponse getUserInfo(String address) {
+        return getUserInfo(address, null);
     }
 
-    /** Undeploy all unused contract instances. */
-    public Object undeployUnused() {
-        return get("/api/v1/library/undeploy/unused", Object.class);
+    /**
+     * Invalidate a specific on-chain state.
+     *
+     * @param address     Cardano address of the user.
+     * @param stateId     ID of the state to invalidate.
+     * @param signMessage Wallet callback to countersign the server's challenge.
+     */
+    public ExecuteUserActionResponse invalidateState(
+            String address, String stateId, MessageSignCallback signMessage) {
+        return performUserStateAction(
+                address, UserActionRequest.UserAction.INVALIDATE_STATE, signMessage, stateId);
     }
 
-    // -------------------------------------------------------------------------
-    // Statistics
-    // -------------------------------------------------------------------------
-
-    /** Get transaction fee statistics. */
-    public Object getTransactionFees() {
-        return get("/api/v1/statistic/tx-fees", Object.class);
+    /**
+     * Invalidate a specific on-chain state using the constructor-level callback.
+     *
+     * @throws UVerifyValidationException if no sign callback was configured.
+     */
+    public ExecuteUserActionResponse invalidateState(String address, String stateId) {
+        return invalidateState(address, stateId, null);
     }
 
-    /** Get certificate counts grouped by category. */
-    public Object getCertificatesByCategory() {
-        return get("/api/v1/statistic/certificate/by-category", Object.class);
+    /**
+     * Opt out from a specific on-chain state.
+     *
+     * @param address     Cardano address of the user.
+     * @param stateId     ID of the state to opt out from.
+     * @param signMessage Wallet callback to countersign the server's challenge.
+     */
+    public ExecuteUserActionResponse optOut(
+            String address, String stateId, MessageSignCallback signMessage) {
+        return performUserStateAction(
+                address, UserActionRequest.UserAction.OPT_OUT, signMessage, stateId);
     }
 
-    // -------------------------------------------------------------------------
-    // Helpers for TypeReference-based deserialization (private overload)
-    // -------------------------------------------------------------------------
-
-    private <T> T post(String path, Object body, TypeReference<T> responseType) {
-        HttpRequest request = buildPostRequest(path, body);
-        return executeRequest(request, responseType);
+    /**
+     * Opt out from a specific on-chain state using the constructor-level callback.
+     *
+     * @throws UVerifyValidationException if no sign callback was configured.
+     */
+    public ExecuteUserActionResponse optOut(String address, String stateId) {
+        return optOut(address, stateId, null);
     }
 }

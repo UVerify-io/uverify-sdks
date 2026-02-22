@@ -1,22 +1,16 @@
 """Main UVerify API client."""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Callable, List, Optional
 
 import requests
 
-from .exceptions import UVerifyApiError
+from .exceptions import UVerifyApiError, UVerifyValidationError
 from .models.certificate import CertificateData, CertificateResponse
-from .models.connected_goods import (
-    ClaimUpdateConnectedGoodsRequest,
-    MintConnectedGoodsRequest,
-    MintConnectedGoodsResponse,
-)
 from .models.transaction import (
     BuildTransactionRequest,
     BuildTransactionResponse,
-    TxContractDetails,
-    TxRedeemerDto,
 )
 from .models.user_state import (
     ExecuteUserActionRequest,
@@ -29,11 +23,83 @@ from .models.user_state import (
 DEFAULT_BASE_URL = "https://api.uverify.io"
 
 
+@dataclass
+class DataSignature:
+    """
+    Holds the CIP-30 ``signData`` result.
+
+    Attributes:
+        key:       Hex-encoded CBOR public key returned by the wallet.
+        signature: Hex-encoded CBOR signature returned by the wallet.
+    """
+
+    key: str
+    signature: str
+
+
+# Wallet-agnostic callback types.
+# MessageSignCallback: receives the challenge string, returns a DataSignature.
+# TransactionSignCallback: receives the unsigned CBOR-hex tx, returns the witness-set CBOR-hex.
+MessageSignCallback = Callable[[str], DataSignature]
+TransactionSignCallback = Callable[[str], str]
+
+
+class UVerifyCore:
+    """
+    Low-level access to the UVerify API primitives.
+
+    Obtain an instance from :attr:`UVerifyClient.core`. These methods map
+    one-to-one to the underlying REST endpoints and give you full control over
+    the transaction lifecycle. For common workflows prefer the high-level helpers
+    on :class:`UVerifyClient` (``issue_certificates``, ``get_user_info``, etc.).
+
+    Example::
+
+        resp = client.core.build_transaction(
+            BuildTransactionRequest(
+                type="default",
+                address="addr1...",
+                state_id="my-state",
+                certificates=[CertificateData(hash="sha256-hash", algorithm="SHA-256")],
+            )
+        )
+        witness_set = my_wallet.sign_tx(resp.unsigned_transaction)
+        client.core.submit_transaction(resp.unsigned_transaction, witness_set)
+    """
+
+    def __init__(self, client: "UVerifyClient") -> None:
+        self._client = client
+
+    def build_transaction(
+        self, request: BuildTransactionRequest
+    ) -> BuildTransactionResponse:
+        """Build an unsigned transaction for certificate issuance or state management."""
+        return self._client._build_transaction(request)
+
+    def submit_transaction(
+        self, transaction: str, witness_set: Optional[str] = None
+    ) -> None:
+        """Submit a signed transaction to the Cardano blockchain."""
+        self._client._submit_transaction(transaction, witness_set)
+
+    def request_user_action(
+        self, request: UserActionRequest
+    ) -> UserActionRequestResponse:
+        """Create a server-signed action request that the user must countersign (step 1)."""
+        return self._client._request_user_action(request)
+
+    def execute_user_action(
+        self, request: ExecuteUserActionRequest
+    ) -> ExecuteUserActionResponse:
+        """Execute a user state action using signatures from both parties (step 2)."""
+        return self._client._execute_user_action(request)
+
+
 class UVerifyClient:
     """
     Main entry point for the UVerify SDK.
 
-    Example::
+    **Certificate verification**::
 
         from uverify_sdk import UVerifyClient
 
@@ -41,20 +107,37 @@ class UVerifyClient:
         certificates = client.verify("a3b4c5d6...")
         print(certificates)
 
+    **Issuing certificates (high-level helper)**::
+
+        client = UVerifyClient(sign_tx=lambda tx: my_wallet.sign_tx(tx))
+        client.issue_certificates(
+            address="addr1...",
+            certificates=[CertificateData(hash="sha256-hash", algorithm="SHA-256")],
+        )
+
+    **Low-level access via** ``.core``::
+
+        resp = client.core.build_transaction(BuildTransactionRequest(...))
+        witness_set = my_wallet.sign_tx(resp.unsigned_transaction)
+        client.core.submit_transaction(resp.unsigned_transaction, witness_set)
+
     Args:
-        base_url: Base URL of the UVerify API.
-                  Defaults to ``https://api.uverify.io``.
-        headers:  Additional HTTP headers added to every request.
-        timeout:  Request timeout in seconds. Defaults to 30.
-        session:  Optional ``requests.Session`` to use (useful for testing).
+        base_url:     Base URL of the UVerify API. Defaults to ``https://api.uverify.io``.
+        headers:      Additional HTTP headers added to every request.
+        timeout:      Request timeout in seconds. Defaults to 30.
+        session:      Optional ``requests.Session`` (useful for testing).
+        sign_message: Default :data:`MessageSignCallback` for user-state actions.
+        sign_tx:      Default :data:`TransactionSignCallback` for certificate issuance.
     """
 
     def __init__(
         self,
         base_url: str = DEFAULT_BASE_URL,
-        headers: Optional[Dict[str, str]] = None,
+        headers: Optional[dict] = None,
         timeout: int = 30,
         session: Optional[requests.Session] = None,
+        sign_message: Optional[MessageSignCallback] = None,
+        sign_tx: Optional[TransactionSignCallback] = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
@@ -64,17 +147,15 @@ class UVerifyClient:
         )
         if headers:
             self._session.headers.update(headers)
+        self._default_sign_message = sign_message
+        self._default_sign_tx = sign_tx
+        self.core = UVerifyCore(self)
 
     # -------------------------------------------------------------------------
-    # Internal helpers
+    # Internal HTTP helpers
     # -------------------------------------------------------------------------
 
-    def _request(
-        self,
-        method: str,
-        path: str,
-        json: Optional[Any] = None,
-    ) -> Any:
+    def _request(self, method: str, path: str, json=None):
         url = f"{self._base_url}{path}"
         response = self._session.request(
             method, url, json=json, timeout=self._timeout
@@ -93,11 +174,92 @@ class UVerifyClient:
             return None
         return response.json()
 
-    def _get(self, path: str) -> Any:
+    def _get(self, path: str):
         return self._request("GET", path)
 
-    def _post(self, path: str, data: Any) -> Any:
+    def _post(self, path: str, data):
         return self._request("POST", path, json=data)
+
+    # -------------------------------------------------------------------------
+    # Callback resolution
+    # -------------------------------------------------------------------------
+
+    def _resolve_sign_message(
+        self, per_call: Optional[MessageSignCallback]
+    ) -> MessageSignCallback:
+        cb = per_call if per_call is not None else self._default_sign_message
+        if cb is None:
+            raise UVerifyValidationError(
+                "A sign_message callback is required. Pass one to the method or set a "
+                "default via UVerifyClient(sign_message=...)."
+            )
+        return cb
+
+    def _resolve_sign_tx(
+        self, per_call: Optional[TransactionSignCallback]
+    ) -> TransactionSignCallback:
+        cb = per_call if per_call is not None else self._default_sign_tx
+        if cb is None:
+            raise UVerifyValidationError(
+                "A sign_tx callback is required. Pass one to the method or set a "
+                "default via UVerifyClient(sign_tx=...)."
+            )
+        return cb
+
+    # -------------------------------------------------------------------------
+    # Private low-level methods (exposed via .core)
+    # -------------------------------------------------------------------------
+
+    def _build_transaction(
+        self, request: BuildTransactionRequest
+    ) -> BuildTransactionResponse:
+        data = self._post("/api/v1/transaction/build", request.to_dict())
+        return BuildTransactionResponse.from_dict(data)
+
+    def _submit_transaction(
+        self, transaction: str, witness_set: Optional[str] = None
+    ) -> None:
+        body: dict = {"transaction": transaction}
+        if witness_set is not None:
+            body["witnessSet"] = witness_set
+        self._post("/api/v1/transaction/submit", body)
+
+    def _request_user_action(
+        self, request: UserActionRequest
+    ) -> UserActionRequestResponse:
+        data = self._post("/api/v1/user/request/action", request.to_dict())
+        return UserActionRequestResponse.from_dict(data)
+
+    def _execute_user_action(
+        self, request: ExecuteUserActionRequest
+    ) -> ExecuteUserActionResponse:
+        data = self._post("/api/v1/user/state/action", request.to_dict())
+        return ExecuteUserActionResponse.from_dict(data)
+
+    def _perform_user_state_action(
+        self,
+        address: str,
+        action: UserAction,
+        sign_message: Optional[MessageSignCallback],
+        state_id: Optional[str] = None,
+    ) -> ExecuteUserActionResponse:
+        cb = self._resolve_sign_message(sign_message)
+        request_response = self._request_user_action(
+            UserActionRequest(address=address, action=action, state_id=state_id)
+        )
+        sig = cb(request_response.message)
+        return self._execute_user_action(
+            ExecuteUserActionRequest(
+                address=request_response.address,
+                action=request_response.action,
+                message=request_response.message,
+                signature=request_response.signature,
+                user_signature=sig.signature,
+                user_public_key=sig.key,
+                timestamp=request_response.timestamp,
+                state_id=state_id,
+            )
+        )
 
     # -------------------------------------------------------------------------
     # Certificate Verification
@@ -131,9 +293,6 @@ class UVerifyClient:
         Args:
             transaction_hash: 64-character hex Cardano transaction hash.
             data_hash:        SHA-256 or SHA-512 hex hash of the certified data.
-
-        Returns:
-            A :class:`~uverify_sdk.models.CertificateResponse`.
         """
         data = self._get(
             f"/api/v1/verify/by-transaction-hash/{transaction_hash}/{data_hash}"
@@ -141,233 +300,108 @@ class UVerifyClient:
         return CertificateResponse.from_dict(data)
 
     # -------------------------------------------------------------------------
-    # Transaction Management
+    # High-level helpers
     # -------------------------------------------------------------------------
 
-    def build_transaction(
-        self, request: BuildTransactionRequest
-    ) -> BuildTransactionResponse:
-        """
-        Build an unsigned transaction for certificate issuance or state management.
-
-        The returned ``unsigned_transaction`` is a CBOR-hex encoded transaction
-        that must be signed by the user's wallet before being submitted via
-        :meth:`submit_transaction`.
-
-        Example::
-
-            from uverify_sdk import UVerifyClient
-            from uverify_sdk.models import BuildTransactionRequest, CertificateData
-
-            client = UVerifyClient()
-            response = client.build_transaction(
-                BuildTransactionRequest(
-                    type="default",
-                    address="addr1...",
-                    state_id="my-state-id",
-                    certificates=[CertificateData(hash="sha256-hash", algorithm="SHA-256")],
-                )
-            )
-            print(response.unsigned_transaction)
-        """
-        data = self._post("/api/v1/transaction/build", request.to_dict())
-        return BuildTransactionResponse.from_dict(data)
-
-    def submit_transaction(
-        self, transaction: str, witness_set: Optional[str] = None
+    def issue_certificates(
+        self,
+        address: str,
+        certificates: List[CertificateData],
+        sign_tx: Optional[TransactionSignCallback] = None,
+        state_id: Optional[str] = None,
     ) -> None:
         """
-        Submit a signed transaction to the Cardano blockchain.
+        Build and submit a certificate issuance transaction.
+
+        Uses the bootstrap (new-state) flow when ``state_id`` is ``None``,
+        or the default (existing-state) flow otherwise.
 
         Args:
-            transaction: CBOR-hex encoded signed transaction.
-            witness_set: Optional separate witness set in CBOR-hex.
-        """
-        body: Dict[str, Any] = {"transaction": transaction}
-        if witness_set is not None:
-            body["witnessSet"] = witness_set
-        self._post("/api/v1/transaction/submit", body)
+            address:      Cardano address of the signer.
+            certificates: Certificates to issue.
+            sign_tx:      Wallet callback; falls back to constructor-level default.
+            state_id:     Existing state ID. Omit for bootstrap flow.
 
-    # -------------------------------------------------------------------------
-    # User State Management
-    # -------------------------------------------------------------------------
-
-    def request_user_action(
-        self, request: UserActionRequest
-    ) -> UserActionRequestResponse:
-        """
-        Create a server-signed action request that the user must countersign.
-
-        This is step 1 of the two-step user-state-action flow.
-        Pass the returned ``message`` to your wallet for signing, then call
-        :meth:`execute_user_action` with the combined signatures.
+        Raises:
+            :exc:`~uverify_sdk.exceptions.UVerifyValidationError`:
+                If no ``sign_tx`` callback is available.
 
         Example::
 
-            req = client.request_user_action(
-                UserActionRequest(address="addr1...", action="USER_INFO")
+            client.issue_certificates(
+                address="addr1...",
+                certificates=[CertificateData(hash="sha256-hash", algorithm="SHA-256")],
             )
-            # Sign req.message with your CIP-30 wallet...
         """
-        data = self._post("/api/v1/user/request/action", request.to_dict())
-        return UserActionRequestResponse.from_dict(data)
+        cb = self._resolve_sign_tx(sign_tx)
+        request = BuildTransactionRequest(
+            type="default" if state_id else "bootstrap",
+            address=address,
+            certificates=certificates,
+            state_id=state_id,
+        )
+        response = self._build_transaction(request)
+        witness_set = cb(response.unsigned_transaction)
+        self._submit_transaction(response.unsigned_transaction, witness_set)
 
-    def execute_user_action(
-        self, request: ExecuteUserActionRequest
+    def get_user_info(
+        self,
+        address: str,
+        sign_message: Optional[MessageSignCallback] = None,
     ) -> ExecuteUserActionResponse:
         """
-        Execute a user state action using signatures from both parties.
+        Retrieve the user's on-chain state (two-step signed action).
 
-        This is step 2 of the two-step flow. See :meth:`request_user_action`.
-        """
-        data = self._post("/api/v1/user/state/action", request.to_dict())
-        return ExecuteUserActionResponse.from_dict(data)
+        Args:
+            address:      Cardano address of the user.
+            sign_message: Wallet callback; falls back to constructor-level default.
 
-    # -------------------------------------------------------------------------
-    # Connected Goods Extension
-    # -------------------------------------------------------------------------
-
-    def mint_connected_goods_batch(
-        self, request: MintConnectedGoodsRequest
-    ) -> MintConnectedGoodsResponse:
-        """
-        Build an unsigned transaction to mint a batch of connected-goods tokens.
+        Returns:
+            :class:`~uverify_sdk.models.ExecuteUserActionResponse` which may
+            contain the user's :class:`~uverify_sdk.models.UserState`.
 
         Example::
 
-            from uverify_sdk.models import (
-                MintConnectedGoodsRequest, ConnectedGoodsItemInput
+            resp = client.get_user_info(
+                address="addr1...",
+                sign_message=lambda msg: DataSignature(key=..., signature=...),
             )
-
-            response = client.mint_connected_goods_batch(
-                MintConnectedGoodsRequest(
-                    address="addr1...",
-                    token_name="MY_ITEM",
-                    items=[
-                        ConnectedGoodsItemInput(password="secret1", asset_name="ITEM001"),
-                        ConnectedGoodsItemInput(password="secret2", asset_name="ITEM002"),
-                    ],
-                )
-            )
-            print(response.batch_id)
+            print(resp.state)
         """
-        data = self._post(
-            "/api/v1/extension/connected-goods/mint/batch", request.to_dict()
-        )
-        return MintConnectedGoodsResponse.from_dict(data)
+        return self._perform_user_state_action(address, "USER_INFO", sign_message)
 
-    def claim_connected_goods_item(
-        self, request: ClaimUpdateConnectedGoodsRequest
-    ) -> None:
-        """Claim a connected-goods item using its password."""
-        self._post(
-            "/api/v1/extension/connected-goods/claim/item", request.to_dict()
-        )
-
-    def update_connected_goods_item(
-        self, request: ClaimUpdateConnectedGoodsRequest
-    ) -> None:
-        """Update the social profile associated with a claimed item."""
-        self._post(
-            "/api/v1/extension/connected-goods/update/item", request.to_dict()
-        )
-
-    def get_connected_goods_item(
-        self, batch_ids: str, item_id: str
-    ) -> Any:
+    def invalidate_state(
+        self,
+        address: str,
+        state_id: str,
+        sign_message: Optional[MessageSignCallback] = None,
+    ) -> ExecuteUserActionResponse:
         """
-        Retrieve a connected-goods item.
+        Invalidate a specific on-chain state.
 
         Args:
-            batch_ids: Comma-separated batch IDs.
-            item_id:   Item identifier within the batch.
+            address:      Cardano address of the user.
+            state_id:     ID of the state to invalidate.
+            sign_message: Wallet callback; falls back to constructor-level default.
         """
-        return self._get(
-            f"/api/v1/extension/connected-goods/{batch_ids}/{item_id}"
+        return self._perform_user_state_action(
+            address, "INVALIDATE_STATE", sign_message, state_id=state_id
         )
 
-    # -------------------------------------------------------------------------
-    # Transaction Service
-    # -------------------------------------------------------------------------
-
-    def get_transaction_scripts(self, tx_hash: str) -> List[TxContractDetails]:
-        """Retrieve all contract scripts used in a transaction."""
-        data = self._get(f"/api/v1/txs/{tx_hash}/scripts")
-        return [TxContractDetails.from_dict(item) for item in (data or [])]
-
-    def get_transaction_redeemers(self, tx_hash: str) -> List[TxRedeemerDto]:
-        """Retrieve redeemer data from a transaction."""
-        data = self._get(f"/api/v1/txs/{tx_hash}/redeemers")
-        return [TxRedeemerDto.from_dict(item) for item in (data or [])]
-
-    # -------------------------------------------------------------------------
-    # Script Service
-    # -------------------------------------------------------------------------
-
-    def get_script(self, script_hash: str) -> Any:
-        """Get basic information about a script."""
-        return self._get(f"/api/v1/scripts/{script_hash}")
-
-    def get_script_json(self, script_hash: str) -> Any:
-        """Get the JSON representation of a script."""
-        return self._get(f"/api/v1/scripts/{script_hash}/json")
-
-    def get_script_details(self, script_hash: str) -> Any:
-        """Get detailed information about a script including its content."""
-        return self._get(f"/api/v1/scripts/{script_hash}/details")
-
-    def get_script_cbor(self, script_hash: str) -> Any:
-        """Get the CBOR encoding of a script."""
-        return self._get(f"/api/v1/scripts/{script_hash}/cbor")
-
-    def get_datum(self, datum_hash: str) -> Any:
-        """Get a datum by its hash."""
-        return self._get(f"/api/v1/scripts/datum/{datum_hash}")
-
-    def get_datum_cbor(self, datum_hash: str) -> Any:
-        """Get the CBOR encoding of a datum by its hash."""
-        return self._get(f"/api/v1/scripts/datum/{datum_hash}/cbor")
-
-    # -------------------------------------------------------------------------
-    # Library Controller
-    # -------------------------------------------------------------------------
-
-    def deploy_proxy(self) -> None:
-        """Deploy a proxy contract for state management."""
-        self._post("/api/v1/library/deploy/proxy", {})
-
-    def upgrade_proxy(self, params: str) -> None:
-        """Upgrade an existing proxy contract."""
-        self._post("/api/v1/library/upgrade/proxy", params)
-
-    def get_deployments(self) -> Any:
-        """List all current library deployments."""
-        return self._get("/api/v1/library/deployments")
-
-    def undeploy_contract(self, transaction_hash: str, output_index: int) -> Any:
+    def opt_out(
+        self,
+        address: str,
+        state_id: str,
+        sign_message: Optional[MessageSignCallback] = None,
+    ) -> ExecuteUserActionResponse:
         """
-        Undeploy a specific contract.
+        Opt out from a specific on-chain state.
 
         Args:
-            transaction_hash: Transaction hash of the deployment.
-            output_index:     Output index of the deployment UTXO.
+            address:      Cardano address of the user.
+            state_id:     ID of the state to opt out from.
+            sign_message: Wallet callback; falls back to constructor-level default.
         """
-        return self._get(
-            f"/api/v1/library/undeploy/{transaction_hash}/{output_index}"
+        return self._perform_user_state_action(
+            address, "OPT_OUT", sign_message, state_id=state_id
         )
-
-    def undeploy_unused(self) -> Any:
-        """Undeploy all unused contract instances."""
-        return self._get("/api/v1/library/undeploy/unused")
-
-    # -------------------------------------------------------------------------
-    # Statistics
-    # -------------------------------------------------------------------------
-
-    def get_transaction_fees(self) -> Any:
-        """Get transaction fee statistics."""
-        return self._get("/api/v1/statistic/tx-fees")
-
-    def get_certificates_by_category(self) -> Any:
-        """Get certificate counts grouped by category."""
-        return self._get("/api/v1/statistic/certificate/by-category")

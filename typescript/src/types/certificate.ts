@@ -28,8 +28,12 @@ export interface CertificateResponse {
 export interface CertificateData {
   /** SHA-256 or SHA-512 hash of the data to be certified. */
   hash: string;
-  /** Optional metadata string to attach to the certificate. */
-  metadata?: string;
+  /**
+   * Optional metadata to attach to the certificate.
+   * Pass a plain object and the SDK will serialize it to JSON automatically,
+   * so you don't need to call `JSON.stringify` yourself.
+   */
+  metadata?: string | Record<string, unknown>;
   /**
    * Hashing algorithm used to produce the hash.
    * Common values: "SHA-256", "SHA-512".

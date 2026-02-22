@@ -278,11 +278,11 @@ describe('UVerifyClient', () => {
 
   describe('core.submitTransaction', () => {
     it('POST /api/v1/transaction/submit with transaction and witnessSet', async () => {
-      const fetch = mockFetch(200, undefined);
+      const fetch = mockFetch(200, { transactionHash: 'tx_hash_001' });
       vi.stubGlobal('fetch', fetch);
 
       const client = new UVerifyClient();
-      await client.core.submitTransaction('signed_cbor', 'witness_cbor');
+      const txHash = await client.core.submitTransaction('signed_cbor', 'witness_cbor');
 
       expect(fetch).toHaveBeenCalledWith(
         expect.stringContaining('/api/v1/transaction/submit'),
@@ -291,10 +291,11 @@ describe('UVerifyClient', () => {
       const body = JSON.parse((fetch.mock.calls[0][1] as RequestInit).body as string);
       expect(body.transaction).toBe('signed_cbor');
       expect(body.witnessSet).toBe('witness_cbor');
+      expect(txHash).toBe('tx_hash_001');
     });
 
     it('omits witnessSet when not provided', async () => {
-      const fetch = mockFetch(200, undefined);
+      const fetch = mockFetch(200, { transactionHash: 'tx_hash_002' });
       vi.stubGlobal('fetch', fetch);
 
       const client = new UVerifyClient();
@@ -353,8 +354,10 @@ describe('UVerifyClient', () => {
   // -------------------------------------------------------------------------
 
   describe('issueCertificates', () => {
-    it('builds, signs, and submits a transaction', async () => {
-      const fetch = vi.fn()
+    const SUBMIT_RESPONSE = { transactionHash: 'tx_hash_abc' };
+
+    function buildAndSubmitFetch() {
+      return vi.fn()
         .mockResolvedValueOnce({
           ok: true, status: 200, statusText: 'OK',
           text: () => Promise.resolve(JSON.stringify(BUILD_RESPONSE)),
@@ -362,43 +365,42 @@ describe('UVerifyClient', () => {
         })
         .mockResolvedValueOnce({
           ok: true, status: 200, statusText: 'OK',
-          text: () => Promise.resolve(''),
-          json: () => Promise.resolve(undefined),
+          text: () => Promise.resolve(JSON.stringify(SUBMIT_RESPONSE)),
+          json: () => Promise.resolve(SUBMIT_RESPONSE),
         });
-      vi.stubGlobal('fetch', fetch);
+    }
 
+    it('builds, signs, submits, and returns the tx hash', async () => {
+      vi.stubGlobal('fetch', buildAndSubmitFetch());
       const signTx = vi.fn().mockResolvedValue('witness_cbor');
       const client = new UVerifyClient();
 
-      await client.issueCertificates(
+      const txHash = await client.issueCertificates(
         'addr1test',
         [{ hash: 'abc', algorithm: 'SHA-256' }],
         signTx
       );
 
       expect(signTx).toHaveBeenCalledWith('cbor_unsigned');
-      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(txHash).toBe('tx_hash_abc');
+    });
 
-      // Second call is submit — verify it carries the witness set
+    it('carries the witness set in the submit body', async () => {
+      const fetch = buildAndSubmitFetch();
+      vi.stubGlobal('fetch', fetch);
+
+      const signTx = vi.fn().mockResolvedValue('witness_cbor');
+      const client = new UVerifyClient();
+      await client.issueCertificates('addr1test', [{ hash: 'abc' }], signTx);
+
+      expect(fetch).toHaveBeenCalledTimes(2);
       const submitBody = JSON.parse((fetch.mock.calls[1][1] as RequestInit).body as string);
       expect(submitBody.transaction).toBe('cbor_unsigned');
       expect(submitBody.witnessSet).toBe('witness_cbor');
     });
 
     it('uses the constructor-level signTx when no per-call callback is given', async () => {
-      const fetch = vi.fn()
-        .mockResolvedValueOnce({
-          ok: true, status: 200, statusText: 'OK',
-          text: () => Promise.resolve(JSON.stringify(BUILD_RESPONSE)),
-          json: () => Promise.resolve(BUILD_RESPONSE),
-        })
-        .mockResolvedValueOnce({
-          ok: true, status: 200, statusText: 'OK',
-          text: () => Promise.resolve(''),
-          json: () => Promise.resolve(undefined),
-        });
-      vi.stubGlobal('fetch', fetch);
-
+      vi.stubGlobal('fetch', buildAndSubmitFetch());
       const signTx = vi.fn().mockResolvedValue('witness_cbor');
       const client = new UVerifyClient({ signTx });
 
@@ -408,17 +410,7 @@ describe('UVerifyClient', () => {
     });
 
     it('passes stateId when provided', async () => {
-      const fetch = vi.fn()
-        .mockResolvedValueOnce({
-          ok: true, status: 200, statusText: 'OK',
-          text: () => Promise.resolve(JSON.stringify(BUILD_RESPONSE)),
-          json: () => Promise.resolve(BUILD_RESPONSE),
-        })
-        .mockResolvedValueOnce({
-          ok: true, status: 200, statusText: 'OK',
-          text: () => Promise.resolve(''),
-          json: () => Promise.resolve(undefined),
-        });
+      const fetch = buildAndSubmitFetch();
       vi.stubGlobal('fetch', fetch);
 
       const client = new UVerifyClient({ signTx: vi.fn().mockResolvedValue('w') });
@@ -426,6 +418,33 @@ describe('UVerifyClient', () => {
 
       const buildBody = JSON.parse((fetch.mock.calls[0][1] as RequestInit).body as string);
       expect(buildBody.stateId).toBe('my-state');
+    });
+
+    it('serializes object metadata to a JSON string before sending', async () => {
+      const fetch = buildAndSubmitFetch();
+      vi.stubGlobal('fetch', fetch);
+
+      const client = new UVerifyClient({ signTx: vi.fn().mockResolvedValue('w') });
+      await client.issueCertificates('addr1test', [
+        { hash: 'abc', metadata: { issuer: 'Acme', version: 1 } },
+      ]);
+
+      const buildBody = JSON.parse((fetch.mock.calls[0][1] as RequestInit).body as string);
+      expect(typeof buildBody.certificates[0].metadata).toBe('string');
+      expect(JSON.parse(buildBody.certificates[0].metadata)).toEqual({ issuer: 'Acme', version: 1 });
+    });
+
+    it('leaves string metadata unchanged', async () => {
+      const fetch = buildAndSubmitFetch();
+      vi.stubGlobal('fetch', fetch);
+
+      const client = new UVerifyClient({ signTx: vi.fn().mockResolvedValue('w') });
+      await client.issueCertificates('addr1test', [
+        { hash: 'abc', metadata: 'plain string' },
+      ]);
+
+      const buildBody = JSON.parse((fetch.mock.calls[0][1] as RequestInit).body as string);
+      expect(buildBody.certificates[0].metadata).toBe('plain string');
     });
 
     it('throws UVerifyValidationError when no signTx callback is available', async () => {

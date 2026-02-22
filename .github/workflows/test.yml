@@ -33,3 +33,43 @@ jobs:
       - name: ✅ Run Tests
         working-directory: ./typescript
         run: npm test
+
+  test-java:
+    name: Java SDK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: ☕ Setup Java 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: ✅ Run Tests
+        working-directory: ./java
+        run: mvn --batch-mode test
+
+  test-python:
+    name: Python SDK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Install Dependencies
+        working-directory: ./python
+        run: pip install -e ".[dev]"
+
+      - name: ✅ Run Tests
+        working-directory: ./python
+        run: pytest tests/ -v

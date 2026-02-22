@@ -10,7 +10,7 @@ Quick start::
     print(certificates)
 """
 
-from .client import UVerifyClient
+from .client import DataSignature, MessageSignCallback, TransactionSignCallback, UVerifyClient, UVerifyCore
 from .exceptions import UVerifyApiError, UVerifyError, UVerifyValidationError
 from .models import (
     BuildStatus,
@@ -18,16 +18,9 @@ from .models import (
     BuildTransactionResponse,
     CertificateData,
     CertificateResponse,
-    ClaimUpdateConnectedGoodsRequest,
-    ConnectedGoodsItemInput,
     ExecuteUserActionRequest,
     ExecuteUserActionResponse,
-    MintConnectedGoodsRequest,
-    MintConnectedGoodsResponse,
-    SocialHub,
     TransactionType,
-    TxContractDetails,
-    TxRedeemerDto,
     UserAction,
     UserActionRequest,
     UserActionRequestResponse,
@@ -38,6 +31,10 @@ from .models import (
 __version__ = "0.1.0"
 __all__ = [
     "UVerifyClient",
+    "UVerifyCore",
+    "DataSignature",
+    "MessageSignCallback",
+    "TransactionSignCallback",
     "UVerifyError",
     "UVerifyApiError",
     "UVerifyValidationError",
@@ -47,8 +44,6 @@ __all__ = [
     "BuildTransactionRequest",
     "BuildTransactionResponse",
     "TransactionType",
-    "TxContractDetails",
-    "TxRedeemerDto",
     "UserAction",
     "UserActionRequest",
     "UserActionRequestResponse",
@@ -56,9 +51,4 @@ __all__ = [
     "ExecuteUserActionResponse",
     "UserState",
     "UVerifyCertificate",
-    "MintConnectedGoodsRequest",
-    "MintConnectedGoodsResponse",
-    "ConnectedGoodsItemInput",
-    "ClaimUpdateConnectedGoodsRequest",
-    "SocialHub",
 ]

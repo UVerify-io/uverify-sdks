@@ -1,7 +1,7 @@
 """Transaction-related data models."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional
 
 from .certificate import CertificateData
@@ -80,50 +80,4 @@ class BuildTransactionResponse:
             unsigned_transaction=data["unsignedTransaction"],
             type=data["type"],
             status=BuildStatus.from_dict(data["status"]),
-        )
-
-
-@dataclass
-class TxContractDetails:
-    tx_hash: str
-    script_hash: str
-    script_content: str
-    type: str
-    redeemer: Optional[Any] = None
-    datum: Optional[Any] = None
-    datum_hash: Optional[str] = None
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "TxContractDetails":
-        return cls(
-            tx_hash=data["tx_hash"],
-            script_hash=data["script_hash"],
-            script_content=data["script_content"],
-            type=data["type"],
-            redeemer=data.get("redeemer"),
-            datum=data.get("datum"),
-            datum_hash=data.get("datum_hash"),
-        )
-
-
-@dataclass
-class TxRedeemerDto:
-    tx_index: int
-    purpose: str
-    script_hash: str
-    redeemer_data_hash: str
-    unit_mem: int
-    unit_steps: int
-    datum_hash: Optional[str] = None
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "TxRedeemerDto":
-        return cls(
-            tx_index=data["tx_index"],
-            purpose=data["purpose"],
-            script_hash=data["script_hash"],
-            redeemer_data_hash=data["redeemer_data_hash"],
-            unit_mem=data["unit_mem"],
-            unit_steps=data["unit_steps"],
-            datum_hash=data.get("datum_hash"),
         )

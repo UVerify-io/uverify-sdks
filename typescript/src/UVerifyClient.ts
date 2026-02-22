@@ -80,8 +80,9 @@ export interface UVerifyCore {
    *
    * @param transaction  - CBOR-hex encoded signed transaction.
    * @param witnessSet   - Optional separate witness set in CBOR-hex.
+   * @returns The Cardano transaction hash.
    */
-  submitTransaction(transaction: string, witnessSet?: string): Promise<void>;
+  submitTransaction(transaction: string, witnessSet?: string): Promise<string>;
 
   /**
    * Create a server-signed action request that the user must countersign.
@@ -274,20 +275,31 @@ export class UVerifyClient {
   private _buildTransaction(
     request: BuildTransactionRequest
   ): Promise<BuildTransactionResponse> {
+    const serialized = {
+      ...request,
+      certificates: request.certificates.map((c) => ({
+        ...c,
+        metadata:
+          c.metadata !== undefined && typeof c.metadata === 'object'
+            ? JSON.stringify(c.metadata)
+            : c.metadata,
+      })),
+    };
     return this.post<BuildTransactionResponse>(
       '/api/v1/transaction/build',
-      request
+      serialized
     );
   }
 
   private async _submitTransaction(
     transaction: string,
     witnessSet?: string
-  ): Promise<void> {
-    await this.post<void>('/api/v1/transaction/submit', {
-      transaction,
-      witnessSet,
-    });
+  ): Promise<string> {
+    const result = await this.post<{ transactionHash: string }>(
+      '/api/v1/transaction/submit',
+      { transaction, witnessSet }
+    );
+    return result.transactionHash;
   }
 
   private _requestUserAction(
@@ -338,9 +350,11 @@ export class UVerifyClient {
    * );
    * ```
    *
+   * @returns The Cardano transaction hash of the submitted transaction.
+   *
    * @example mesh.js
    * ```ts
-   * await client.issueCertificates(
+   * const txHash = await client.issueCertificates(
    *   'addr1...', 'my-state-id',
    *   [{ hash: 'sha256-hash-of-doc', algorithm: 'SHA-256' }],
    *   (unsignedTx) => wallet.signTx(unsignedTx, true),
@@ -352,7 +366,7 @@ export class UVerifyClient {
     certificates: CertificateData[],
     signCallback?: TransactionSignCallback,
     stateId?: string
-  ): Promise<void> {
+  ): Promise<string> {
     const cb = this._resolveTxCallback(signCallback);
     const { unsignedTransaction } = await this._buildTransaction({
       type: 'default',
@@ -361,7 +375,7 @@ export class UVerifyClient {
       certificates,
     });
     const witnessSet = await cb(unsignedTransaction);
-    await this._submitTransaction(unsignedTransaction, witnessSet);
+    return this._submitTransaction(unsignedTransaction, witnessSet);
   }
 
   /**
