@@ -1,6 +1,6 @@
 # @uverify/sdk
 
-Official TypeScript / JavaScript SDK for the [UVerify](https://uverify.io) API.
+Official TypeScript / JavaScript SDK for the [UVerify](https://app.uverify.io) API.
 
 ## Requirements
 
@@ -40,10 +40,13 @@ import { UVerifyClient } from '@uverify/sdk';
 const client = new UVerifyClient();
 
 // Connect to a self-hosted instance
-const client = new UVerifyClient({ baseUrl: 'https://my-instance.example.com' });
+const client = new UVerifyClient({ baseUrl: 'http://localhost:9090' });
 
-// Add custom headers (e.g. an API key)
-const client = new UVerifyClient({ headers: { 'X-Api-Key': 'your-key' } });
+// Register default signing callbacks so you don't pass them on every call
+const client = new UVerifyClient({
+  signMessage: async (message) => wallet.signData(address, message),
+  signTx: (unsignedTx) => wallet.signTx(unsignedTx, true),
+});
 ```
 
 ### Verify a certificate
@@ -58,109 +61,158 @@ const cert = await client.verifyByTransaction('cardano-tx-hash', 'data-hash');
 
 ### Issue certificates
 
-Issuing a certificate is a two-step process: build an unsigned transaction,
-sign it with your wallet, then submit it.
+`issueCertificates` handles the full flow — build, sign, submit — in one call and
+returns the Cardano transaction hash on success.
+
+`metadata` can be a plain object; the SDK serialises it to JSON automatically.
+
+The example below uses [mesh.js](https://meshjs.dev) with a headless wallet, which
+is a good fit for scripts and backends. In a browser you would pass `api.signTx`
+from a CIP-30 wallet instead.
 
 ```ts
-// Step 1: build
-const { unsignedTransaction } = await client.buildTransaction({
-  type: 'default',
-  address: 'addr1...',
-  stateId: 'your-state-id',
-  certificates: [
-    { hash: 'sha256-hash-of-document', algorithm: 'SHA-256' },
-  ],
+import { UVerifyClient } from '@uverify/sdk';
+import { MeshCardanoHeadlessWallet, AddressType } from '@meshsdk/wallet';
+import { KoiosProvider } from '@meshsdk/core';
+import { sha256 } from 'js-sha256';
+
+const provider = new KoiosProvider('preprod');
+const wallet = await MeshCardanoHeadlessWallet.fromMnemonic({
+  networkId: 0,
+  walletAddressType: AddressType.Base,
+  fetcher: provider,
+  submitter: provider,
+  mnemonic: ['word1', 'word2', /* ... */],
+});
+const address = await wallet.getChangeAddressBech32();
+
+const client = new UVerifyClient({
+  signMessage: (message) => wallet.signData(address, message),
+  signTx: (unsignedTx) => wallet.signTx(unsignedTx, true),
 });
 
-// Step 2: sign with your CIP-30 wallet (browser) or cardano-cli, then submit
-await client.submitTransaction(signedTransactionCborHex);
+const myData = 'Hello, UVerify!';
+const hash = sha256(myData);
+
+const txHash = await client.issueCertificates(address, [
+  {
+    hash,
+    algorithm: 'SHA-256',
+    metadata: {
+      issuer: 'Acme Corp',
+      description: 'Proof of existence for myData',
+      date: new Date().toISOString(),
+    },
+  },
+]);
+console.log('Certified at tx:', txHash);
+```
+
+Optionally pass a `stateId` as the last argument to issue under a specific state:
+
+```ts
+const txHash = await client.issueCertificates(
+  address,
+  [{ hash: 'sha256-hash' }],
+  undefined,       // use constructor signTx
+  'my-state-id',
+);
 ```
 
 ### User state management
 
 ```ts
-// Step 1: request a signed challenge from the server
-const request = await client.requestUserAction({
+// Retrieve current state
+const state = await client.getUserInfo(address);
+console.log('Certificates remaining:', state?.countdown);
+
+// Invalidate a state (destructive)
+if (state?.id) {
+  await client.invalidateState(address, state.id);
+}
+
+// Opt out entirely (destructive)
+if (state?.id) {
+  await client.optOut(address, state.id);
+}
+```
+
+A per-call signing callback can be passed as the last argument to any of these
+methods if you didn't register one in the constructor.
+
+### Low-level access via `.core`
+
+For advanced flows and custom submission logic use the `.core` submodule
+to call each step individually:
+
+```ts
+// Build
+const { unsignedTransaction } = await client.core.buildTransaction({
+  type: 'default',
+  address: 'addr1...',
+  stateId: 'your-state-id',
+  certificates: [{ hash: 'sha256-hash', algorithm: 'SHA-256' }],
+});
+
+// Sign with your wallet, then submit
+const witnessSet = await wallet.signTx(unsignedTransaction, true);
+const txHash = await client.core.submitTransaction(unsignedTransaction, witnessSet);
+```
+
+```ts
+// Two-step user state action (manual)
+const challenge = await client.core.requestUserAction({
   address: 'addr1...',
   action: 'USER_INFO',
 });
 
-// Step 2: sign request.message with your wallet, then execute
-const result = await client.executeUserAction({
-  ...request,
-  userSignature: walletSignatureHex,
-  userPublicKey: walletPublicKeyHex,
+const { key, signature } = await wallet.signData(address, challenge.message);
+
+const result = await client.core.executeUserAction({
+  ...challenge,
+  userSignature: signature,
+  userPublicKey: key,
 });
 console.log(result.state);
-```
-
-### Connected Goods
-
-```ts
-// Mint a batch
-const { batch_id, unsigned_transaction } = await client.mintConnectedGoodsBatch({
-  address: 'addr1...',
-  token_name: 'MY_ITEM',
-  items: [
-    { password: 'secret1', asset_name: 'ITEM001' },
-    { password: 'secret2', asset_name: 'ITEM002' },
-  ],
-});
-
-// Claim an item
-await client.claimConnectedGoodsItem({
-  batch_id,
-  password: 'secret1',
-  user_address: 'addr1...',
-  social_hub: { name: 'Alice', twitter: '@alice' },
-});
-```
-
-### Statistics
-
-```ts
-const fees = await client.getTransactionFees();
-const categories = await client.getCertificatesByCategory();
 ```
 
 ## Error handling
 
 ```ts
-import { UVerifyApiError } from '@uverify/sdk';
+import { UVerifyApiError, UVerifyValidationError } from '@uverify/sdk';
 
 try {
-  const certs = await client.verify('bad-hash');
+  const txHash = await client.issueCertificates(address, certs);
 } catch (err) {
   if (err instanceof UVerifyApiError) {
-    console.error(`API error ${err.statusCode}:`, err.message);
+    // HTTP error from the API
+    console.error(`API error ${err.statusCode}:`, err.responseBody);
+  }
+  if (err instanceof UVerifyValidationError) {
+    // Missing sign callback — pass one to the method or set it in the constructor
+    console.error(err.message);
   }
 }
 ```
 
 ## API Reference
 
-All methods map directly to the [UVerify REST API](https://api.uverify.io/v1/api-docs).
-Full type definitions are exported from the package.
+### High-level helpers
+
+| Method | Description |
+|--------|-------------|
+| `verify(hash)` | Look up all on-chain certificates for a data hash |
+| `verifyByTransaction(txHash, dataHash)` | Fetch a specific certificate by tx hash + data hash |
+| `issueCertificates(address, certificates, signTx?, stateId?)` | Build, sign, and submit; returns tx hash |
+| `getUserInfo(address, signMessage?)` | Retrieve the current user state |
+| `invalidateState(address, stateId, signMessage?)` | Mark a state as invalid |
+| `optOut(address, stateId, signMessage?)` | Remove the user's state entirely |
+
+### Low-level core (`.core`)
 
 | Method | Endpoint |
 |--------|----------|
-| `verify(hash)` | `GET /api/v1/verify/{hash}` |
-| `verifyByTransaction(txHash, dataHash)` | `GET /api/v1/verify/by-transaction-hash/{txHash}/{dataHash}` |
-| `buildTransaction(request)` | `POST /api/v1/transaction/build` |
-| `submitTransaction(tx, witnessSet?)` | `POST /api/v1/transaction/submit` |
-| `requestUserAction(request)` | `POST /api/v1/user/request/action` |
-| `executeUserAction(request)` | `POST /api/v1/user/state/action` |
-| `mintConnectedGoodsBatch(request)` | `POST /api/v1/extension/connected-goods/mint/batch` |
-| `claimConnectedGoodsItem(request)` | `POST /api/v1/extension/connected-goods/claim/item` |
-| `updateConnectedGoodsItem(request)` | `POST /api/v1/extension/connected-goods/update/item` |
-| `getConnectedGoodsItem(batchIds, itemId)` | `GET /api/v1/extension/connected-goods/{batchIds}/{itemId}` |
-| `getTransactionScripts(txHash)` | `GET /api/v1/txs/{txHash}/scripts` |
-| `getTransactionRedeemers(txHash)` | `GET /api/v1/txs/{txHash}/redeemers` |
-| `getScript(scriptHash)` | `GET /api/v1/scripts/{scriptHash}` |
-| `getScriptJson(scriptHash)` | `GET /api/v1/scripts/{scriptHash}/json` |
-| `getScriptDetails(scriptHash)` | `GET /api/v1/scripts/{scriptHash}/details` |
-| `getScriptCbor(scriptHash)` | `GET /api/v1/scripts/{scriptHash}/cbor` |
-| `getDatum(datumHash)` | `GET /api/v1/scripts/datum/{datumHash}` |
-| `getDatumCbor(datumHash)` | `GET /api/v1/scripts/datum/{datumHash}/cbor` |
-| `getTransactionFees()` | `GET /api/v1/statistic/tx-fees` |
-| `getCertificatesByCategory()` | `GET /api/v1/statistic/certificate/by-category` |
+| `core.buildTransaction(request)` | `POST /api/v1/transaction/build` |
+| `core.submitTransaction(tx, witnessSet?)` | `POST /api/v1/transaction/submit` |
+| `core.requestUserAction(request)` | `POST /api/v1/user/request/action` |
+| `core.executeUserAction(request)` | `POST /api/v1/user/state/action` |

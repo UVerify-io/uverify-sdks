@@ -1,6 +1,6 @@
 # UVerify SDKs
 
-Mono-repository containing official SDKs for the [UVerify](https://uverify.io) API — a certificate verification platform built on the Cardano blockchain.
+Mono-repository containing official SDKs for the [UVerify](https://app.uverify.io) API — a certificate verification platform built on the Cardano blockchain.
 
 ## Packages
 
@@ -19,11 +19,9 @@ UVerify lets you issue and verify tamper-proof certificates on the Cardano block
 All three SDKs expose the same high-level operations:
 
 - **Verify** — check whether a data hash has a certificate on-chain
-- **Build** — construct an unsigned transaction to issue certificates
-- **Submit** — submit a signed transaction to the blockchain
-- **User state** — manage your issuing workspace (invalidate state, opt-out, query info)
-- **Connected Goods** — mint, claim and update connected-goods NFT batches
-- **Statistics** — query fee and certificate stats
+- **Issue** — build, sign, and submit a certificate transaction in one step
+- **User state** — manage your issuing workspace (query info, invalidate state, opt-out)
+- **Low-level core** — construct unsigned transactions and submit them separately for multi-sig flows
 
 See the README inside each SDK directory for language-specific instructions.
 

@@ -55,6 +55,12 @@ UVerifyClient client = UVerifyClient.builder()
 UVerifyClient client = UVerifyClient.builder()
     .header("X-Api-Key", "your-key")
     .build();
+
+// Register default signing callbacks once so you don't pass them on every call
+UVerifyClient client = UVerifyClient.builder()
+    .signMessage(message -> wallet.signData(address, message))
+    .signTx(unsignedTx -> wallet.signTx(unsignedTx))
+    .build();
 ```
 
 ### Verify a certificate
@@ -69,28 +75,70 @@ CertificateResponse cert = client.verifyByTransaction("cardano-tx-hash", "data-h
 
 ### Issue certificates
 
-Issuing is a two-step process: build an unsigned transaction, sign it
-with your wallet, then submit it.
+`issueCertificates` handles the full flow — build, sign, submit — in one call.
+
+```java
+import io.uverify.sdk.model.CertificateData;
+import java.util.List;
+
+client.issueCertificates(
+    "addr1...",
+    List.of(new CertificateData("sha256-hash-of-document", "SHA-256")),
+    unsignedTx -> wallet.signTx(unsignedTx)  // omit if set in constructor
+);
+```
+
+Optionally pass a `stateId` as the second argument:
+
+```java
+client.issueCertificates(
+    "addr1...",
+    "my-state-id",
+    List.of(new CertificateData("sha256-hash"))
+    // uses constructor signTx
+);
+```
+
+### User state management
+
+```java
+import io.uverify.sdk.model.ExecuteUserActionResponse;
+
+// Retrieve current state
+ExecuteUserActionResponse response = client.getUserInfo("addr1...");
+System.out.println("Certificates remaining: " + response.getState().getCountdown());
+
+// Invalidate a state
+client.invalidateState("addr1...", "state-id");
+
+// Opt out entirely
+client.optOut("addr1...", "state-id");
+```
+
+A per-call signing callback can be passed as the last argument to any of these
+methods if you didn't register one in the constructor.
+
+### Low-level access via `.core`
+
+For advanced flows (multi-sig, custom submission logic) use the `core` field
+to call each step individually:
 
 ```java
 import io.uverify.sdk.model.BuildTransactionRequest;
 import io.uverify.sdk.model.BuildTransactionResponse;
-import io.uverify.sdk.model.CertificateData;
 
-BuildTransactionResponse response = client.buildTransaction(
+// Build
+BuildTransactionResponse response = client.core.buildTransaction(
     BuildTransactionRequest.defaultRequest(
-        "addr1...",
-        "your-state-id",
-        new CertificateData("sha256-hash-of-document", "SHA-256")
+        "addr1...", "your-state-id",
+        new CertificateData("sha256-hash", "SHA-256")
     )
 );
 
-String unsignedTx = response.getUnsignedTransaction();
-// Sign unsignedTx with your wallet, then:
-client.submitTransaction(signedTxCborHex);
+// Sign with your wallet, then submit
+String witnessSet = wallet.signTx(response.getUnsignedTransaction());
+client.core.submitTransaction(response.getUnsignedTransaction(), witnessSet);
 ```
-
-### User state management
 
 ```java
 import io.uverify.sdk.model.UserActionRequest;
@@ -98,59 +146,33 @@ import io.uverify.sdk.model.UserActionRequest.UserAction;
 import io.uverify.sdk.model.UserActionRequestResponse;
 import io.uverify.sdk.model.ExecuteUserActionRequest;
 
-// Step 1: get a server-signed challenge
-UserActionRequestResponse req = client.requestUserAction(
+// Two-step user state action (manual)
+UserActionRequestResponse challenge = client.core.requestUserAction(
     new UserActionRequest("addr1...", UserAction.USER_INFO)
 );
 
-// Step 2: sign req.getMessage() with your wallet, then execute
-Map<String, Object> result = client.executeUserAction(
-    new ExecuteUserActionRequest(req, walletSignatureHex, walletPublicKeyHex)
+DataSignature sig = wallet.signData(address, challenge.getMessage());
+
+ExecuteUserActionResponse result = client.core.executeUserAction(
+    new ExecuteUserActionRequest(challenge, sig.getSignature(), sig.getKey())
 );
-```
-
-### Connected Goods
-
-```java
-import io.uverify.sdk.model.MintConnectedGoodsRequest;
-import io.uverify.sdk.model.MintConnectedGoodsRequest.Item;
-import io.uverify.sdk.model.MintConnectedGoodsResponse;
-import io.uverify.sdk.model.ClaimUpdateConnectedGoodsRequest;
-
-// Mint a batch
-MintConnectedGoodsResponse resp = client.mintConnectedGoodsBatch(
-    new MintConnectedGoodsRequest(
-        "addr1...", "MY_ITEM",
-        new Item("secret1", "ITEM001"),
-        new Item("secret2", "ITEM002")
-    )
-);
-String batchId = resp.getBatchId();
-
-// Claim an item
-client.claimConnectedGoodsItem(
-    new ClaimUpdateConnectedGoodsRequest("secret1", batchId, "addr1...")
-        .withSocialHubEntry("name", "Alice")
-        .withSocialHubEntry("twitter", "@alice")
-);
-```
-
-### Statistics
-
-```java
-Object fees = client.getTransactionFees();
-Object categories = client.getCertificatesByCategory();
+System.out.println(result.getState());
 ```
 
 ## Error Handling
 
 ```java
-import io.uverify.sdk.exception.UVerifyException;
+import io.uverify.sdk.exception.UVerifyApiException;
+import io.uverify.sdk.exception.UVerifyValidationException;
 
 try {
-    List<CertificateResponse> certs = client.verify("bad-hash");
-} catch (UVerifyException e) {
+    client.issueCertificates("addr1...", certs);
+} catch (UVerifyApiException e) {
+    // HTTP error from the API (status code, response body available)
     System.err.println("API error " + e.getStatusCode() + ": " + e.getMessage());
+} catch (UVerifyValidationException e) {
+    // Missing sign callback — pass one to the method or set it in the builder
+    System.err.println(e.getMessage());
 }
 ```
 
@@ -163,28 +185,23 @@ mvn clean package
 
 ## API Reference
 
-All methods map to the [UVerify REST API](https://api.uverify.io/v1/api-docs).
+### High-level helpers
+
+| Method | Description |
+|--------|-------------|
+| `verify(hash)` | Look up all on-chain certificates for a data hash |
+| `verifyByTransaction(txHash, dataHash)` | Fetch a specific certificate by tx hash + data hash |
+| `issueCertificates(address, certificates, signTx?)` | Build, sign, and submit a certificate transaction |
+| `issueCertificates(address, stateId, certificates, signTx?)` | Same, scoped to a state |
+| `getUserInfo(address, signMessage?)` | Retrieve the current user state |
+| `invalidateState(address, stateId, signMessage?)` | Mark a state as invalid |
+| `optOut(address, stateId, signMessage?)` | Remove the user's state entirely |
+
+### Low-level core (`.core`)
 
 | Method | Endpoint |
 |--------|----------|
-| `verify(hash)` | `GET /api/v1/verify/{hash}` |
-| `verifyByTransaction(txHash, dataHash)` | `GET /api/v1/verify/by-transaction-hash/{txHash}/{dataHash}` |
-| `buildTransaction(request)` | `POST /api/v1/transaction/build` |
-| `submitTransaction(tx)` | `POST /api/v1/transaction/submit` |
-| `submitTransaction(tx, witnessSet)` | `POST /api/v1/transaction/submit` |
-| `requestUserAction(request)` | `POST /api/v1/user/request/action` |
-| `executeUserAction(request)` | `POST /api/v1/user/state/action` |
-| `mintConnectedGoodsBatch(request)` | `POST /api/v1/extension/connected-goods/mint/batch` |
-| `claimConnectedGoodsItem(request)` | `POST /api/v1/extension/connected-goods/claim/item` |
-| `updateConnectedGoodsItem(request)` | `POST /api/v1/extension/connected-goods/update/item` |
-| `getConnectedGoodsItem(batchIds, itemId)` | `GET /api/v1/extension/connected-goods/{batchIds}/{itemId}` |
-| `getTransactionScripts(txHash)` | `GET /api/v1/txs/{txHash}/scripts` |
-| `getTransactionRedeemers(txHash)` | `GET /api/v1/txs/{txHash}/redeemers` |
-| `getScript(scriptHash)` | `GET /api/v1/scripts/{scriptHash}` |
-| `getScriptJson(scriptHash)` | `GET /api/v1/scripts/{scriptHash}/json` |
-| `getScriptDetails(scriptHash)` | `GET /api/v1/scripts/{scriptHash}/details` |
-| `getScriptCbor(scriptHash)` | `GET /api/v1/scripts/{scriptHash}/cbor` |
-| `getDatum(datumHash)` | `GET /api/v1/scripts/datum/{datumHash}` |
-| `getDatumCbor(datumHash)` | `GET /api/v1/scripts/datum/{datumHash}/cbor` |
-| `getTransactionFees()` | `GET /api/v1/statistic/tx-fees` |
-| `getCertificatesByCategory()` | `GET /api/v1/statistic/certificate/by-category` |
+| `core.buildTransaction(request)` | `POST /api/v1/transaction/build` |
+| `core.submitTransaction(tx, witnessSet?)` | `POST /api/v1/transaction/submit` |
+| `core.requestUserAction(request)` | `POST /api/v1/user/request/action` |
+| `core.executeUserAction(request)` | `POST /api/v1/user/state/action` |

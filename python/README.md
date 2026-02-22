@@ -41,6 +41,12 @@ client = UVerifyClient(base_url="https://my-instance.example.com")
 
 # Add custom headers (e.g. an API key) and set a custom timeout
 client = UVerifyClient(headers={"X-Api-Key": "your-key"}, timeout=60)
+
+# Register default signing callbacks once so you don't pass them on every call
+client = UVerifyClient(
+    sign_message=lambda msg: wallet.sign_data(address, msg),
+    sign_tx=lambda tx: wallet.sign_tx(tx),
+)
 ```
 
 ### Verify a certificate
@@ -55,127 +61,135 @@ cert = client.verify_by_transaction("cardano-tx-hash", "data-hash")
 
 ### Issue certificates
 
-Issuing is a two-step process: build an unsigned transaction, sign it
-with your wallet, then submit it.
+`issue_certificates` handles the full flow — build, sign, submit — in one call
+and returns the Cardano transaction hash on success.
+
+`metadata` can be a plain `dict`; the SDK serialises it to JSON automatically.
 
 ```python
-from uverify_sdk.models import BuildTransactionRequest, CertificateData
+from uverify_sdk.models import CertificateData
 
-response = client.build_transaction(
-    BuildTransactionRequest(
-        type="default",
-        address="addr1...",
-        state_id="your-state-id",
-        certificates=[
-            CertificateData(hash="sha256-hash-of-document", algorithm="SHA-256"),
-        ],
-    )
+tx_hash = client.issue_certificates(
+    address="addr1...",
+    certificates=[
+        CertificateData(
+            hash="sha256-hash-of-document",
+            algorithm="SHA-256",
+            metadata={"issuer": "Acme Corp", "date": "2024-01-01"},
+        )
+    ],
+    sign_tx=lambda tx: wallet.sign_tx(tx),  # omit if set in constructor
 )
+print("Certified at tx:", tx_hash)
+```
 
-# Sign response.unsigned_transaction with your wallet, then:
-client.submit_transaction(signed_tx_cbor_hex)
+Optionally pass a `state_id` to issue under a specific state:
+
+```python
+tx_hash = client.issue_certificates(
+    address="addr1...",
+    certificates=[CertificateData(hash="sha256-hash")],
+    state_id="my-state-id",
+)
 ```
 
 ### User state management
 
 ```python
+# Retrieve current state
+state = client.get_user_info("addr1...")
+print("Certificates remaining:", state.countdown if state else None)
+
+# Invalidate a state
+client.invalidate_state("addr1...", "state-id")
+
+# Opt out entirely
+client.opt_out("addr1...", "state-id")
+```
+
+A per-call signing callback can be passed as the `sign_message` keyword argument
+to any of these methods if you didn't register one in the constructor.
+
+### Low-level access via `.core`
+
+For advanced flows (multi-sig, custom submission logic) use the `.core` attribute
+to call each step individually:
+
+```python
+from uverify_sdk.models import BuildTransactionRequest, CertificateData
+
+# Build
+response = client.core.build_transaction(
+    BuildTransactionRequest(
+        type="default",
+        address="addr1...",
+        state_id="your-state-id",
+        certificates=[CertificateData(hash="sha256-hash", algorithm="SHA-256")],
+    )
+)
+
+# Sign with your wallet, then submit
+witness_set = wallet.sign_tx(response.unsigned_transaction)
+tx_hash = client.core.submit_transaction(response.unsigned_transaction, witness_set)
+```
+
+```python
 from uverify_sdk.models import UserActionRequest, ExecuteUserActionRequest
 
-# Step 1: get a server-signed challenge
-request = client.request_user_action(
+# Two-step user state action (manual)
+challenge = client.core.request_user_action(
     UserActionRequest(address="addr1...", action="USER_INFO")
 )
 
-# Step 2: sign request.message with your CIP-30 wallet, then execute
-result = client.execute_user_action(
+sig = wallet.sign_data(address, challenge.message)
+
+result = client.core.execute_user_action(
     ExecuteUserActionRequest(
-        address=request.address,
-        action=request.action,
-        message=request.message,
-        signature=request.signature,
-        timestamp=request.timestamp,
-        user_signature=wallet_signature_hex,
-        user_public_key=wallet_public_key_hex,
+        address=challenge.address,
+        action=challenge.action,
+        message=challenge.message,
+        signature=challenge.signature,
+        timestamp=challenge.timestamp,
+        user_signature=sig.signature,
+        user_public_key=sig.key,
     )
 )
 print(result.state)
 ```
 
-### Connected Goods
-
-```python
-from uverify_sdk.models import (
-    MintConnectedGoodsRequest,
-    ConnectedGoodsItemInput,
-    ClaimUpdateConnectedGoodsRequest,
-    SocialHub,
-)
-
-# Mint a batch
-response = client.mint_connected_goods_batch(
-    MintConnectedGoodsRequest(
-        address="addr1...",
-        token_name="MY_ITEM",
-        items=[
-            ConnectedGoodsItemInput(password="secret1", asset_name="ITEM001"),
-            ConnectedGoodsItemInput(password="secret2", asset_name="ITEM002"),
-        ],
-    )
-)
-batch_id = response.batch_id
-
-# Claim an item
-client.claim_connected_goods_item(
-    ClaimUpdateConnectedGoodsRequest(
-        batch_id=batch_id,
-        password="secret1",
-        user_address="addr1...",
-        social_hub=SocialHub(name="Alice", twitter="@alice"),
-    )
-)
-```
-
-### Statistics
-
-```python
-fees = client.get_transaction_fees()
-categories = client.get_certificates_by_category()
-```
-
 ## Error Handling
 
 ```python
-from uverify_sdk import UVerifyApiError
+from uverify_sdk import UVerifyApiError, UVerifyValidationError
 
 try:
-    certs = client.verify("bad-hash")
+    tx_hash = client.issue_certificates("addr1...", certs)
 except UVerifyApiError as e:
+    # HTTP error from the API (status code, response body available)
     print(f"API error {e.status_code}: {e}")
+except UVerifyValidationError as e:
+    # Missing sign callback — pass one to the method or set it in the constructor
+    print(e)
 ```
 
 ## API Reference
 
-All methods map to the [UVerify REST API](https://api.uverify.io/v1/api-docs).
+### High-level helpers
+
+| Method | Description |
+|--------|-------------|
+| `verify(hash)` | Look up all on-chain certificates for a data hash |
+| `verify_by_transaction(tx_hash, data_hash)` | Fetch a specific certificate by tx hash + data hash |
+| `issue_certificates(address, certificates, sign_tx?, state_id?)` | Build, sign, and submit a certificate transaction; returns tx hash |
+| `get_user_info(address, sign_message?)` | Retrieve the current user state |
+| `invalidate_state(address, state_id, sign_message?)` | Mark a state as invalid |
+| `opt_out(address, state_id, sign_message?)` | Remove the user's state entirely |
+
+### Low-level core (`.core`)
 
 | Method | Endpoint |
 |--------|----------|
-| `verify(hash)` | `GET /api/v1/verify/{hash}` |
-| `verify_by_transaction(tx_hash, data_hash)` | `GET /api/v1/verify/by-transaction-hash/{txHash}/{dataHash}` |
-| `build_transaction(request)` | `POST /api/v1/transaction/build` |
-| `submit_transaction(tx, witness_set?)` | `POST /api/v1/transaction/submit` |
-| `request_user_action(request)` | `POST /api/v1/user/request/action` |
-| `execute_user_action(request)` | `POST /api/v1/user/state/action` |
-| `mint_connected_goods_batch(request)` | `POST /api/v1/extension/connected-goods/mint/batch` |
-| `claim_connected_goods_item(request)` | `POST /api/v1/extension/connected-goods/claim/item` |
-| `update_connected_goods_item(request)` | `POST /api/v1/extension/connected-goods/update/item` |
-| `get_connected_goods_item(batch_ids, item_id)` | `GET /api/v1/extension/connected-goods/{batchIds}/{itemId}` |
-| `get_transaction_scripts(tx_hash)` | `GET /api/v1/txs/{txHash}/scripts` |
-| `get_transaction_redeemers(tx_hash)` | `GET /api/v1/txs/{txHash}/redeemers` |
-| `get_script(script_hash)` | `GET /api/v1/scripts/{scriptHash}` |
-| `get_script_json(script_hash)` | `GET /api/v1/scripts/{scriptHash}/json` |
-| `get_script_details(script_hash)` | `GET /api/v1/scripts/{scriptHash}/details` |
-| `get_script_cbor(script_hash)` | `GET /api/v1/scripts/{scriptHash}/cbor` |
-| `get_datum(datum_hash)` | `GET /api/v1/scripts/datum/{datumHash}` |
-| `get_datum_cbor(datum_hash)` | `GET /api/v1/scripts/datum/{datumHash}/cbor` |
-| `get_transaction_fees()` | `GET /api/v1/statistic/tx-fees` |
-| `get_certificates_by_category()` | `GET /api/v1/statistic/certificate/by-category` |
+| `core.build_transaction(request)` | `POST /api/v1/transaction/build` |
+| `core.submit_transaction(tx, witness_set?)` | `POST /api/v1/transaction/submit` |
+| `core.request_user_action(request)` | `POST /api/v1/user/request/action` |
+| `core.execute_user_action(request)` | `POST /api/v1/user/state/action` |
