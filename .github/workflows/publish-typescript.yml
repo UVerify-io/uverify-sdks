@@ -20,7 +20,7 @@ jobs:
       - name: 🔧 Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22.14.0'
           registry-url: https://registry.npmjs.org
           cache: 'npm'
           cache-dependency-path: typescript/package-lock.json
@@ -37,9 +37,13 @@ jobs:
         working-directory: ./typescript
         run: npm run build
 
-      - name: 🚀 Publish to npm
+      - name: 🚀 Publish to npm (OIDC only)
         working-directory: ./typescript
-        run: npm publish --provenance --access public
+        env:
+          NPM_CONFIG_USERCONFIG: /dev/null
+        run: |
+          unset NODE_AUTH_TOKEN NPM_TOKEN
+          npm publish --provenance --access public
 
       - name: ✅ Verify Published Package
         run: npm info @uverify/sdk
