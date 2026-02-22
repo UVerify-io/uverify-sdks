@@ -11,7 +11,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.io.IOException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -33,9 +32,9 @@ class UVerifyClientTest {
     @SuppressWarnings("unchecked")
     private HttpResponse<String> mockResponse(int status, Object body) throws Exception {
         HttpResponse<String> resp = (HttpResponse<String>) mock(HttpResponse.class);
-        when(resp.statusCode()).thenReturn(status);
         String json = body instanceof String ? (String) body : mapper.writeValueAsString(body);
-        when(resp.body()).thenReturn(json);
+        lenient().when(resp.statusCode()).thenReturn(status);
+        lenient().when(resp.body()).thenReturn(json);
         return resp;
     }
 
@@ -55,7 +54,7 @@ class UVerifyClientTest {
         List<Map<String, Object>> body = List.of(
                 Map.of("hash", "abc", "transactionHash", "tx1", "creationTime", "2024-01-01")
         );
-        when(mockHttpClient.send(any(), any())).thenReturn(mockResponse(200, body));
+        doReturn(mockResponse(200, body)).when(mockHttpClient).send(any(), any());
 
         List<CertificateResponse> result = client.verify("abc");
 
@@ -66,7 +65,7 @@ class UVerifyClientTest {
 
     @Test
     void verify_returnsEmptyListOnNullBody() throws Exception {
-        when(mockHttpClient.send(any(), any())).thenReturn(mockResponse(200, ""));
+        doReturn(mockResponse(200, "")).when(mockHttpClient).send(any(), any());
 
         List<CertificateResponse> result = client.verify("abc");
 
@@ -75,7 +74,7 @@ class UVerifyClientTest {
 
     @Test
     void verify_throwsUVerifyExceptionOn404() throws Exception {
-        when(mockHttpClient.send(any(), any())).thenReturn(mockResponse(404, "not found"));
+        doReturn(mockResponse(404, "not found")).when(mockHttpClient).send(any(), any());
 
         UVerifyException ex = assertThrows(UVerifyException.class, () -> client.verify("abc"));
         assertEquals(404, ex.getStatusCode());
@@ -83,7 +82,7 @@ class UVerifyClientTest {
 
     @Test
     void verify_throwsUVerifyExceptionOn500() throws Exception {
-        when(mockHttpClient.send(any(), any())).thenReturn(mockResponse(500, "server error"));
+        doReturn(mockResponse(500, "server error")).when(mockHttpClient).send(any(), any());
 
         UVerifyException ex = assertThrows(UVerifyException.class, () -> client.verify("abc"));
         assertEquals(500, ex.getStatusCode());
@@ -97,7 +96,7 @@ class UVerifyClientTest {
     @Test
     void verifyByTransaction_returnsCertificate() throws Exception {
         Map<String, Object> body = Map.of("hash", "h1", "transactionHash", "tx99");
-        when(mockHttpClient.send(any(), any())).thenReturn(mockResponse(200, body));
+        doReturn(mockResponse(200, body)).when(mockHttpClient).send(any(), any());
 
         CertificateResponse cert = client.verifyByTransaction("tx99", "h1");
 
@@ -117,7 +116,7 @@ class UVerifyClientTest {
     @Test
     void core_buildTransaction_sendsPostAndReturnsResponse() throws Exception {
         Map<String, Object> body = Map.of("unsignedTransaction", "cbor-hex", "type", "default");
-        when(mockHttpClient.send(any(), any())).thenReturn(mockResponse(200, body));
+        doReturn(mockResponse(200, body)).when(mockHttpClient).send(any(), any());
 
         BuildTransactionResponse resp = client.core.buildTransaction(
                 BuildTransactionRequest.defaultRequest(
@@ -128,7 +127,7 @@ class UVerifyClientTest {
 
     @Test
     void core_submitTransaction_sendsPost() throws Exception {
-        when(mockHttpClient.send(any(), any())).thenReturn(mockResponse(200, ""));
+        doReturn(mockResponse(200, "")).when(mockHttpClient).send(any(), any());
 
         assertDoesNotThrow(() -> client.core.submitTransaction("signed-tx", "witness-set"));
         verify(mockHttpClient).send(any(HttpRequest.class), any());
@@ -140,7 +139,7 @@ class UVerifyClientTest {
                 "address", "addr1...", "action", "USER_INFO",
                 "message", "challenge-msg", "signature", "server-sig",
                 "timestamp", 1700000000L, "status", 200);
-        when(mockHttpClient.send(any(), any())).thenReturn(mockResponse(200, body));
+        doReturn(mockResponse(200, body)).when(mockHttpClient).send(any(), any());
 
         UserActionRequestResponse resp = client.core.requestUserAction(
                 new UserActionRequest("addr1...", UserActionRequest.UserAction.USER_INFO));
@@ -152,7 +151,7 @@ class UVerifyClientTest {
     @Test
     void core_executeUserAction_returnsResponse() throws Exception {
         Map<String, Object> body = Map.of("status", 200);
-        when(mockHttpClient.send(any(), any())).thenReturn(mockResponse(200, body));
+        doReturn(mockResponse(200, body)).when(mockHttpClient).send(any(), any());
 
         UserActionRequestResponse requestResp = new UserActionRequestResponse();
         requestResp.setAddress("addr1...");
@@ -174,9 +173,9 @@ class UVerifyClientTest {
     @Test
     void issueCertificates_buildsAndSubmitsTransaction() throws Exception {
         Map<String, Object> buildBody = Map.of("unsignedTransaction", "unsigned-cbor", "type", "bootstrap");
-        when(mockHttpClient.send(any(), any()))
-                .thenReturn(mockResponse(200, buildBody))
-                .thenReturn(mockResponse(200, ""));
+        HttpResponse<String> resp1 = mockResponse(200, buildBody);
+        HttpResponse<String> resp2 = mockResponse(200, "");
+        doReturn(resp1).doReturn(resp2).when(mockHttpClient).send(any(), any());
 
         client.issueCertificates(
                 "addr1...",
@@ -189,9 +188,9 @@ class UVerifyClientTest {
     @Test
     void issueCertificates_withStateId_usesDefaultType() throws Exception {
         Map<String, Object> buildBody = Map.of("unsignedTransaction", "unsigned-cbor", "type", "default");
-        when(mockHttpClient.send(any(), any()))
-                .thenReturn(mockResponse(200, buildBody))
-                .thenReturn(mockResponse(200, ""));
+        HttpResponse<String> resp1 = mockResponse(200, buildBody);
+        HttpResponse<String> resp2 = mockResponse(200, "");
+        doReturn(resp1).doReturn(resp2).when(mockHttpClient).send(any(), any());
 
         client.issueCertificates(
                 "addr1...",
@@ -210,9 +209,9 @@ class UVerifyClientTest {
                 .build();
 
         Map<String, Object> buildBody = Map.of("unsignedTransaction", "unsigned-cbor", "type", "bootstrap");
-        when(mockHttpClient.send(any(), any()))
-                .thenReturn(mockResponse(200, buildBody))
-                .thenReturn(mockResponse(200, ""));
+        HttpResponse<String> resp1 = mockResponse(200, buildBody);
+        HttpResponse<String> resp2 = mockResponse(200, "");
+        doReturn(resp1).doReturn(resp2).when(mockHttpClient).send(any(), any());
 
         assertDoesNotThrow(() -> clientWithCallback.issueCertificates(
                 "addr1...",
@@ -237,9 +236,9 @@ class UVerifyClientTest {
                 "timestamp", 1700000000L, "status", 200);
         Map<String, Object> executeBody = Map.of("status", 200);
 
-        when(mockHttpClient.send(any(), any()))
-                .thenReturn(mockResponse(200, requestBody))
-                .thenReturn(mockResponse(200, executeBody));
+        HttpResponse<String> resp1 = mockResponse(200, requestBody);
+        HttpResponse<String> resp2 = mockResponse(200, executeBody);
+        doReturn(resp1).doReturn(resp2).when(mockHttpClient).send(any(), any());
 
         ExecuteUserActionResponse resp = client.getUserInfo(
                 "addr1...",
@@ -262,9 +261,9 @@ class UVerifyClientTest {
                 "timestamp", 1700000000L, "status", 200);
         Map<String, Object> executeBody = Map.of("status", 200);
 
-        when(mockHttpClient.send(any(), any()))
-                .thenReturn(mockResponse(200, requestBody))
-                .thenReturn(mockResponse(200, executeBody));
+        HttpResponse<String> resp1 = mockResponse(200, requestBody);
+        HttpResponse<String> resp2 = mockResponse(200, executeBody);
+        doReturn(resp1).doReturn(resp2).when(mockHttpClient).send(any(), any());
 
         assertDoesNotThrow(() -> clientWithCallback.getUserInfo("addr1..."));
     }
@@ -286,9 +285,9 @@ class UVerifyClientTest {
                 "timestamp", 1700000000L, "status", 200);
         Map<String, Object> executeBody = Map.of("status", 200);
 
-        when(mockHttpClient.send(any(), any()))
-                .thenReturn(mockResponse(200, requestBody))
-                .thenReturn(mockResponse(200, executeBody));
+        HttpResponse<String> resp1 = mockResponse(200, requestBody);
+        HttpResponse<String> resp2 = mockResponse(200, executeBody);
+        doReturn(resp1).doReturn(resp2).when(mockHttpClient).send(any(), any());
 
         ExecuteUserActionResponse resp = client.invalidateState(
                 "addr1...", "state-123",
@@ -305,9 +304,9 @@ class UVerifyClientTest {
                 "timestamp", 1700000000L, "status", 200);
         Map<String, Object> executeBody = Map.of("status", 200);
 
-        when(mockHttpClient.send(any(), any()))
-                .thenReturn(mockResponse(200, requestBody))
-                .thenReturn(mockResponse(200, executeBody));
+        HttpResponse<String> resp1 = mockResponse(200, requestBody);
+        HttpResponse<String> resp2 = mockResponse(200, executeBody);
+        doReturn(resp1).doReturn(resp2).when(mockHttpClient).send(any(), any());
 
         ExecuteUserActionResponse resp = client.optOut(
                 "addr1...", "state-123",
@@ -336,7 +335,7 @@ class UVerifyClientTest {
                 .httpClient(mockHttpClient)
                 .build();
 
-        when(mockHttpClient.send(any(), any())).thenReturn(mockResponse(200, List.of()));
+        doReturn(mockResponse(200, List.of())).when(mockHttpClient).send(any(), any());
 
         custom.verify("hash");
 

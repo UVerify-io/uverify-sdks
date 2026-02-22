@@ -1,6 +1,6 @@
 # uverify-sdk (Python)
 
-Official Python SDK for the [UVerify](https://uverify.io) API.
+Official Python SDK for the [UVerify](https://app.uverify.io) API.
 
 ## Requirements
 
@@ -37,12 +37,12 @@ from uverify_sdk import UVerifyClient
 client = UVerifyClient()
 
 # Connect to a self-hosted instance
-client = UVerifyClient(base_url="https://my-instance.example.com")
+client = UVerifyClient(base_url="http://localhost:9090")
 
-# Add custom headers (e.g. an API key) and set a custom timeout
-client = UVerifyClient(headers={"X-Api-Key": "your-key"}, timeout=60)
+# Add custom headers and set a custom timeout
+client = UVerifyClient(headers={"X-Custom-Header": "value"}, timeout=60)
 
-# Register default signing callbacks once so you don't pass them on every call
+# Register default signing callbacks so you don't pass them on every call
 client = UVerifyClient(
     sign_message=lambda msg: wallet.sign_data(address, msg),
     sign_tx=lambda tx: wallet.sign_tx(tx),

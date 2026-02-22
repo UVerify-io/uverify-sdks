@@ -326,11 +326,12 @@ public class UVerifyClient {
             UserActionRequest.UserAction action,
             MessageSignCallback signMessage,
             String stateId) {
+        MessageSignCallback cb = resolveSignMessage(signMessage); // validate before any HTTP call
         UserActionRequest req = stateId != null
                 ? new UserActionRequest(address, action, stateId)
                 : new UserActionRequest(address, action);
         UserActionRequestResponse requestResponse = requestUserActionInternal(req);
-        DataSignature sig = resolveSignMessage(signMessage).sign(requestResponse.getMessage());
+        DataSignature sig = cb.sign(requestResponse.getMessage());
         ExecuteUserActionRequest execReq = new ExecuteUserActionRequest(
                 requestResponse, sig.getSignature(), sig.getKey());
         return executeUserActionInternal(execReq);

@@ -1,6 +1,6 @@
 # uverify-sdk (Java)
 
-Official Java SDK for the [UVerify](https://uverify.io) API.
+Official Java SDK for the [UVerify](https://app.uverify.io) API.
 
 ## Requirements
 
@@ -30,6 +30,7 @@ implementation 'io.uverify:uverify-sdk:0.1.0'
 ```java
 import io.uverify.sdk.UVerifyClient;
 import io.uverify.sdk.model.CertificateResponse;
+import java.util.List;
 
 UVerifyClient client = new UVerifyClient();
 
@@ -45,18 +46,12 @@ certs.forEach(c -> System.out.println(c.getTransactionHash()));
 // Connect to the public API (default)
 UVerifyClient client = new UVerifyClient();
 
-// Connect to a self-hosted instance with a custom timeout
+// Connect to a self-hosted instance
 UVerifyClient client = UVerifyClient.builder()
-    .baseUrl("https://my-instance.example.com")
-    .timeout(Duration.ofSeconds(60))
+    .baseUrl("http://localhost:9090")
     .build();
 
-// Add a custom header to every request
-UVerifyClient client = UVerifyClient.builder()
-    .header("X-Api-Key", "your-key")
-    .build();
-
-// Register default signing callbacks once so you don't pass them on every call
+// Register default signing callbacks so you don't pass them on every call
 UVerifyClient client = UVerifyClient.builder()
     .signMessage(message -> wallet.signData(address, message))
     .signTx(unsignedTx -> wallet.signTx(unsignedTx))
@@ -77,24 +72,36 @@ CertificateResponse cert = client.verifyByTransaction("cardano-tx-hash", "data-h
 
 `issueCertificates` handles the full flow — build, sign, submit — in one call.
 
+`metadata` must be a JSON string; use your preferred JSON library to serialise objects.
+
 ```java
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.uverify.sdk.model.CertificateData;
 import java.util.List;
+import java.util.Map;
+
+ObjectMapper mapper = new ObjectMapper();
+
+String metadata = mapper.writeValueAsString(Map.of(
+    "issuer", "Acme Corp",
+    "description", "Proof of existence",
+    "date", "2024-01-01"
+));
 
 client.issueCertificates(
     "addr1...",
-    List.of(new CertificateData("sha256-hash-of-document", "SHA-256")),
+    List.of(new CertificateData("sha256-hash-of-document", "SHA-256", metadata)),
     unsignedTx -> wallet.signTx(unsignedTx)  // omit if set in constructor
 );
 ```
 
-Optionally pass a `stateId` as the second argument:
+Optionally pass a `stateId` to issue under a specific state:
 
 ```java
 client.issueCertificates(
     "addr1...",
     "my-state-id",
-    List.of(new CertificateData("sha256-hash"))
+    List.of(new CertificateData("sha256-hash", "SHA-256"))
     // uses constructor signTx
 );
 ```
@@ -108,10 +115,10 @@ import io.uverify.sdk.model.ExecuteUserActionResponse;
 ExecuteUserActionResponse response = client.getUserInfo("addr1...");
 System.out.println("Certificates remaining: " + response.getState().getCountdown());
 
-// Invalidate a state
+// Invalidate a state (destructive)
 client.invalidateState("addr1...", "state-id");
 
-// Opt out entirely
+// Opt out entirely (destructive)
 client.optOut("addr1...", "state-id");
 ```
 
@@ -120,7 +127,7 @@ methods if you didn't register one in the constructor.
 
 ### Low-level access via `.core`
 
-For advanced flows (multi-sig, custom submission logic) use the `core` field
+For advanced flows and custom submission logic use the `core` field
 to call each step individually:
 
 ```java
@@ -162,12 +169,12 @@ System.out.println(result.getState());
 ## Error Handling
 
 ```java
-import io.uverify.sdk.exception.UVerifyApiException;
+import io.uverify.sdk.exception.UVerifyException;
 import io.uverify.sdk.exception.UVerifyValidationException;
 
 try {
     client.issueCertificates("addr1...", certs);
-} catch (UVerifyApiException e) {
+} catch (UVerifyException e) {
     // HTTP error from the API (status code, response body available)
     System.err.println("API error " + e.getStatusCode() + ": " + e.getMessage());
 } catch (UVerifyValidationException e) {
