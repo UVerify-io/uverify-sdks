@@ -1,19 +1,20 @@
 {
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": true,
+  "separate-pull-requests": true,
+  "monorepo-tags": true,
   "packages": {
     "typescript": {
       "release-type": "node",
-      "package-name": "@uverify/sdk",
-      "changelog-path": "CHANGELOG.md"
+      "package-name": "@uverify/sdk"
     },
     "java": {
       "release-type": "maven",
-      "package-name": "uverify-sdk",
-      "changelog-path": "CHANGELOG.md"
+      "package-name": "uverify-sdk"
     },
     "python": {
       "release-type": "python",
-      "package-name": "uverify-sdk",
-      "changelog-path": "CHANGELOG.md"
+      "package-name": "uverify-sdk"
     }
   }
 }
