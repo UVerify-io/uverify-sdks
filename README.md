@@ -1,5 +1,23 @@
 # UVerify SDKs
 
+<p align="center">
+  <a href="https://github.com/UVerify-io/uverify-sdks/actions/workflows/test.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/UVerify-io/uverify-sdks/test.yml?label=test" alt="Test Workflow Status">
+  </a>
+  <a href="https://github.com/UVerify-io/uverify-sdks/actions/workflows/release.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/UVerify-io/uverify-sdks/release.yml?label=release" alt="Release Workflow Status">
+  </a>
+  <a href="https://conventionalcommits.org">
+    <img src="https://img.shields.io/badge/Conventional%20Commits-1.0.0-%23FE5196?logo=conventionalcommits&logoColor=white" alt="Conventional Commits">
+  </a>
+  <a href="https://discord.gg/Dvqkynn6xc">
+    <img src="https://img.shields.io/discord/1263737876743589938" alt="Join our Discord">
+  </a>
+  <a href="https://cla-assistant.io/UVerify-io/uverify-sdks">
+    <img src="https://cla-assistant.io/readme/badge/UVerify-io/uverify-sdks" alt="CLA assistant">
+  </a>
+</p>
+
 Mono-repository containing official SDKs for the [UVerify](https://app.uverify.io) API — a certificate verification platform built on the Cardano blockchain.
 
 ## Packages
