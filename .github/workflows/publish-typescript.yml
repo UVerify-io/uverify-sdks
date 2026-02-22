@@ -24,6 +24,9 @@ jobs:
           cache: 'npm'
           cache-dependency-path: typescript/package-lock.json
 
+      - name: 🔧 Configure npm registry
+        run: npm config set registry https://registry.npmjs.org/
+
       - name: 📦 Install Dependencies
         working-directory: ./typescript
         run: npm ci
@@ -38,7 +41,7 @@ jobs:
 
       - name: 🚀 Publish to npm
         working-directory: ./typescript
-        run: npm publish
+        run: npm publish --provenance
 
       - name: ✅ Verify Published Package
         run: npm info @uverify/sdk
