@@ -3,10 +3,11 @@ name: 🚀 Publish @uverify/sdk to npm
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 jobs:
   publish:
-    if: startsWith(github.event.release.tag_name, 'typescript@')
+    if: "github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'typescript@')"
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -37,7 +38,7 @@ jobs:
 
       - name: 🚀 Publish to npm
         working-directory: ./typescript
-        run: npm publish --provenance --access public
+        run: npm publish
 
       - name: ✅ Verify Published Package
         run: npm info @uverify/sdk
