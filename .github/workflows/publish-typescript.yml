@@ -25,6 +25,25 @@ jobs:
           cache: 'npm'
           cache-dependency-path: typescript/package-lock.json
 
+      - name: ⬆️ Ensure npm supports Trusted Publishing
+        run: npm i -g npm@^11.5.1
+
+      - name: 🔎 Versions
+        run: |
+          node -v
+          npm -v
+
+      - name: 🔎 Check for npm auth config (redacted)
+        run: |
+          for f in "$HOME/.npmrc" ".npmrc" "typescript/.npmrc"; do
+            echo "== $f =="
+            if [ -f "$f" ]; then
+              sed -E 's/(_authToken=).+/\1***REDACTED***/' "$f"
+            else
+              echo "(none)"
+            fi
+          done
+
       - name: 📦 Install Dependencies
         working-directory: ./typescript
         run: npm ci
