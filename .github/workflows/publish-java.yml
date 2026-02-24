@@ -42,6 +42,7 @@ jobs:
 
       - name: 📦 Build & Publish
         working-directory: ./java
+        timeout-minutes: 15
         run: mvn --batch-mode -Prelease -DskipTests deploy
         env:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
