@@ -24,9 +24,7 @@ jobs:
 
       - name: 🔑 Import GPG Key
         run: |
-          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | base64 --decode | gpg --batch --import
 
       - name: 🔧 Configure Maven settings
         uses: s4u/maven-settings-action@v3.0.0
