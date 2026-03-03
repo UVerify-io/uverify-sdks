@@ -79,7 +79,7 @@ describe('UVerifyClient', () => {
   // -------------------------------------------------------------------------
 
   describe('constructor', () => {
-    it('uses the public API URL by default', async () => {
+    it('uses the preprod API URL by default', async () => {
       const fetch = mockFetch(200, [CERT]);
       vi.stubGlobal('fetch', fetch);
 
@@ -87,7 +87,7 @@ describe('UVerifyClient', () => {
       await client.verify('abc123');
 
       expect(fetch).toHaveBeenCalledWith(
-        'https://api.uverify.io/api/v1/verify/abc123',
+        'https://api.preprod.uverify.io/api/v1/verify/abc123',
         expect.any(Object)
       );
     });

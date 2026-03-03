@@ -18,7 +18,7 @@ from uverify_sdk.models import (
     UserActionRequestResponse,
 )
 
-BASE_URL = "https://api.uverify.io"
+BASE_URL = "https://api.preprod.uverify.io"
 
 
 # ---------------------------------------------------------------------------
