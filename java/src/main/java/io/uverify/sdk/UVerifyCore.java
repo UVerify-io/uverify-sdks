@@ -57,4 +57,28 @@ public interface UVerifyCore {
      * @return Action response; may contain updated {@link io.uverify.sdk.model.UserState}.
      */
     ExecuteUserActionResponse executeUserAction(ExecuteUserActionRequest request);
+
+    /**
+     * Request a faucet challenge message from the server (step 1 of the faucet flow).
+     *
+     * <p>The returned {@link FaucetChallengeResponse#getMessage()} must be signed by the
+     * user's wallet before calling {@link #claimFaucetFunds}.
+     *
+     * <p>Only available when the backend is configured with {@code FAUCET_ENABLED=true}.
+     *
+     * @param address Cardano address that should receive the testnet funds.
+     */
+    FaucetChallengeResponse requestFaucetChallenge(String address);
+
+    /**
+     * Claim testnet ADA using the signed challenge (step 2 of the faucet flow).
+     *
+     * <p>On success, {@link FaucetClaimResponse#getTxHash()} contains the Cardano transaction
+     * hash of the faucet transfer.
+     *
+     * <p>Only available when the backend is configured with {@code FAUCET_ENABLED=true}.
+     *
+     * @param request Claim request built from the challenge response plus wallet signature.
+     */
+    FaucetClaimResponse claimFaucetFunds(FaucetClaimRequest request);
 }

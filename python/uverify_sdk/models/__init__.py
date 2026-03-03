@@ -1,4 +1,5 @@
 from .certificate import CertificateData, CertificateResponse
+from .faucet import FaucetChallengeResponse, FaucetClaimRequest, FaucetClaimResponse
 from .transaction import (
     BuildStatus,
     BuildTransactionRequest,
@@ -29,4 +30,7 @@ __all__ = [
     "ExecuteUserActionResponse",
     "UserState",
     "UVerifyCertificate",
+    "FaucetChallengeResponse",
+    "FaucetClaimRequest",
+    "FaucetClaimResponse",
 ]

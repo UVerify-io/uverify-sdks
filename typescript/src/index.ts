@@ -1,4 +1,4 @@
-export { UVerifyClient } from './UVerifyClient.js';
+export { UVerifyClient, waitFor } from './UVerifyClient.js';
 export type {
   UVerifyClientOptions,
   UVerifyCore,
@@ -20,4 +20,7 @@ export type {
   ExecuteUserActionResponse,
   UserState,
   UVerifyCertificate,
+  FaucetChallengeResponse,
+  FaucetClaimRequest,
+  FaucetClaimResponse,
 } from './types/index.js';

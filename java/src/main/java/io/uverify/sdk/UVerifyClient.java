@@ -22,6 +22,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
 
 /**
  * Main entry point for the UVerify SDK.
@@ -57,7 +58,7 @@ import java.util.Map;
  */
 public class UVerifyClient {
 
-    public static final String DEFAULT_BASE_URL = "https://api.uverify.io";
+    public static final String DEFAULT_BASE_URL = "https://api.preprod.uverify.io";
 
     private final String baseUrl;
     private final HttpClient httpClient;
@@ -102,6 +103,16 @@ public class UVerifyClient {
             @Override
             public ExecuteUserActionResponse executeUserAction(ExecuteUserActionRequest request) {
                 return executeUserActionInternal(request);
+            }
+
+            @Override
+            public FaucetChallengeResponse requestFaucetChallenge(String address) {
+                return requestFaucetChallengeInternal(address);
+            }
+
+            @Override
+            public FaucetClaimResponse claimFaucetFunds(FaucetClaimRequest request) {
+                return claimFaucetFundsInternal(request);
             }
         };
     }
@@ -321,6 +332,16 @@ public class UVerifyClient {
         return post("/api/v1/user/state/action", request, ExecuteUserActionResponse.class);
     }
 
+    private FaucetChallengeResponse requestFaucetChallengeInternal(String address) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("address", address);
+        return post("/api/v1/faucet/request", body, FaucetChallengeResponse.class);
+    }
+
+    private FaucetClaimResponse claimFaucetFundsInternal(FaucetClaimRequest request) {
+        return post("/api/v1/faucet/claim", request, FaucetClaimResponse.class);
+    }
+
     private ExecuteUserActionResponse performUserStateAction(
             String address,
             UserActionRequest.UserAction action,
@@ -489,5 +510,119 @@ public class UVerifyClient {
      */
     public ExecuteUserActionResponse optOut(String address, String stateId) {
         return optOut(address, stateId, null);
+    }
+
+    /**
+     * Request testnet ADA from the UVerify dev faucet in a single step.
+     *
+     * <p>Orchestrates the full challenge-sign-claim flow:
+     * <ol>
+     *   <li>Requests a server-signed challenge for {@code address}.
+     *   <li>Passes the challenge message to {@code signMessage} (CIP-30 {@code signData}).
+     *   <li>Submits both signatures to the faucet claim endpoint.
+     * </ol>
+     *
+     * <p>Returns a {@link FaucetClaimResponse} with the Cardano transaction hash on success.
+     *
+     * <p><strong>Only available when the backend is configured with
+     * {@code FAUCET_ENABLED=true}.</strong>
+     * This is intended for testnet development environments only.
+     *
+     * <pre>{@code
+     * UVerifyClient client = UVerifyClient.builder()
+     *     .baseUrl("http://localhost:9090")
+     *     .signMessage(msg -> myWallet.signData(address, msg))
+     *     .build();
+     *
+     * FaucetClaimResponse result = client.fundWallet("addr_test1...");
+     * System.out.println("Funded by tx: " + result.getTxHash());
+     * }</pre>
+     *
+     * <p>Use {@link #waitFor} to poll until the funds are queryable on-chain.
+     *
+     * @param address     Cardano address that should receive the testnet funds.
+     * @param signMessage Wallet callback to sign the challenge; uses the constructor-level
+     *                    default when {@code null}.
+     * @throws UVerifyValidationException if no sign callback is available.
+     */
+    public FaucetClaimResponse fundWallet(String address, MessageSignCallback signMessage) {
+        MessageSignCallback cb = resolveSignMessage(signMessage);
+        try {
+            FaucetChallengeResponse challenge = requestFaucetChallengeInternal(address);
+            DataSignature sig = cb.sign(challenge.getMessage());
+            return claimFaucetFundsInternal(new FaucetClaimRequest(challenge, sig.getSignature(), sig.getKey()));
+        } catch (UVerifyException e) {
+            if (e.getStatusCode() == 404) {
+                throw new UVerifyException(
+                        "Faucet endpoint not found (HTTP 404). " +
+                        "The faucet is only available on backends started with FAUCET_ENABLED=true. " +
+                        "This feature does not exist on mainnet — acquire ADA from a cryptocurrency exchange instead.",
+                        404, e.getResponseBody());
+            }
+            if (e.getStatusCode() == 429) {
+                throw new UVerifyException(
+                        "Faucet cooldown active (HTTP 429). " +
+                        "This address recently received testnet funds. Please wait a few minutes before trying again.",
+                        429, e.getResponseBody());
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Fund a wallet with testnet ADA using the constructor-level callback.
+     *
+     * @throws UVerifyValidationException if no sign callback was configured.
+     */
+    public FaucetClaimResponse fundWallet(String address) {
+        return fundWallet(address, null);
+    }
+
+    // -------------------------------------------------------------------------
+    // Polling utility
+    // -------------------------------------------------------------------------
+
+    /**
+     * Polls {@code condition} every {@code intervalMs} milliseconds until it
+     * returns {@code true}, or throws once {@code timeoutMs} has elapsed.
+     *
+     * <p>Useful for waiting on eventual-consistency operations such as faucet
+     * funds settling on-chain or a submitted certificate becoming queryable.
+     *
+     * <pre>{@code
+     * client.fundWallet("addr_test1...", signMessage);
+     * UVerifyClient.waitFor(
+     *     () -> !client.verify("sha256-hash").isEmpty(),
+     *     120_000,  // 2-minute timeout
+     *     2_000     // poll every 2 s
+     * );
+     * }</pre>
+     *
+     * @param condition   Returns {@code true} when polling should stop.
+     * @param timeoutMs   Maximum wait in milliseconds.
+     * @param intervalMs  Delay between polls in milliseconds.
+     * @throws Exception        if {@code condition} throws.
+     * @throws RuntimeException if the timeout is reached.
+     */
+    public static void waitFor(
+            Callable<Boolean> condition,
+            long timeoutMs,
+            long intervalMs) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            if (Boolean.TRUE.equals(condition.call())) return;
+            Thread.sleep(intervalMs);
+        }
+        throw new RuntimeException("waitFor timed out after " + timeoutMs + " ms");
+    }
+
+    /**
+     * Overload with defaults: 60-second timeout, 2-second poll interval.
+     *
+     * @throws Exception        if {@code condition} throws.
+     * @throws RuntimeException if the timeout is reached.
+     */
+    public static void waitFor(Callable<Boolean> condition) throws Exception {
+        waitFor(condition, 60_000, 2_000);
     }
 }

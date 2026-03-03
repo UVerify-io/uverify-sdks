@@ -12,6 +12,7 @@ from .models.transaction import (
     BuildTransactionRequest,
     BuildTransactionResponse,
 )
+from .models.faucet import FaucetChallengeResponse, FaucetClaimRequest, FaucetClaimResponse
 from .models.user_state import (
     ExecuteUserActionRequest,
     ExecuteUserActionResponse,
@@ -20,7 +21,7 @@ from .models.user_state import (
     UserActionRequestResponse,
 )
 
-DEFAULT_BASE_URL = "https://api.uverify.io"
+DEFAULT_BASE_URL = "https://api.preprod.uverify.io"
 
 
 @dataclass
@@ -93,6 +94,22 @@ class UVerifyCore:
     ) -> ExecuteUserActionResponse:
         """Execute a user state action using signatures from both parties (step 2)."""
         return self._client._execute_user_action(request)
+
+    def request_faucet_challenge(self, address: str) -> FaucetChallengeResponse:
+        """
+        Request a faucet challenge message from the server (step 1 of 2).
+
+        Only available when the backend is configured with ``FAUCET_ENABLED=true``.
+        """
+        return self._client._request_faucet_challenge(address)
+
+    def claim_faucet_funds(self, request: FaucetClaimRequest) -> FaucetClaimResponse:
+        """
+        Claim testnet ADA using the signed challenge (step 2 of 2).
+
+        Only available when the backend is configured with ``FAUCET_ENABLED=true``.
+        """
+        return self._client._claim_faucet_funds(request)
 
 
 class UVerifyClient:
@@ -235,6 +252,14 @@ class UVerifyClient:
     ) -> ExecuteUserActionResponse:
         data = self._post("/api/v1/user/state/action", request.to_dict())
         return ExecuteUserActionResponse.from_dict(data)
+
+    def _request_faucet_challenge(self, address: str) -> FaucetChallengeResponse:
+        data = self._post("/api/v1/faucet/request", {"address": address})
+        return FaucetChallengeResponse.from_dict(data)
+
+    def _claim_faucet_funds(self, request: FaucetClaimRequest) -> FaucetClaimResponse:
+        data = self._post("/api/v1/faucet/claim", request.to_dict())
+        return FaucetClaimResponse.from_dict(data)
 
     def _perform_user_state_action(
         self,
@@ -405,3 +430,119 @@ class UVerifyClient:
         return self._perform_user_state_action(
             address, "OPT_OUT", sign_message, state_id=state_id
         )
+
+    def fund_wallet(
+        self,
+        address: str,
+        sign_message: Optional[MessageSignCallback] = None,
+    ) -> FaucetClaimResponse:
+        """
+        Fund a wallet with testnet ADA from the UVerify dev faucet in a single step.
+
+        Orchestrates the full challenge-sign-claim flow:
+
+        1. Requests a server-signed challenge for ``address``.
+        2. Passes the challenge message to ``sign_message`` (CIP-30 ``signData``).
+        3. Submits both signatures to the faucet claim endpoint.
+
+        Returns a :class:`~uverify_sdk.models.FaucetClaimResponse` with the
+        Cardano transaction hash on success. Use :func:`~uverify_sdk.wait_for`
+        to poll until the funds are queryable on-chain.
+
+        **Only available when the backend is configured with** ``FAUCET_ENABLED=true``.
+        This is intended for testnet development environments only.
+
+        Args:
+            address:      Cardano address that should receive the testnet funds.
+            sign_message: Wallet callback; falls back to constructor-level default.
+
+        Example::
+
+            from uverify_sdk import UVerifyClient, DataSignature, wait_for
+
+            client = UVerifyClient(
+                base_url="http://localhost:9090",
+                sign_message=lambda msg: DataSignature(key=..., signature=...),
+            )
+            result = client.fund_wallet("addr_test1...")
+            print("Funded by tx:", result.tx_hash)
+        """
+        cb = self._resolve_sign_message(sign_message)
+        try:
+            challenge = self._request_faucet_challenge(address)
+            sig = cb(challenge.message)
+            return self._claim_faucet_funds(
+                FaucetClaimRequest(
+                    address=address,
+                    message=challenge.message,
+                    signature=challenge.signature,
+                    user_signature=sig.signature,
+                    user_public_key=sig.key,
+                    timestamp=challenge.timestamp,
+                )
+            )
+        except UVerifyApiError as e:
+            if e.status_code == 404:
+                raise UVerifyApiError(
+                    "Faucet endpoint not found (HTTP 404). "
+                    "The faucet is only available on backends started with FAUCET_ENABLED=true. "
+                    "This feature does not exist on mainnet — acquire ADA from a cryptocurrency exchange instead.",
+                    404,
+                    e.response_body,
+                ) from e
+            if e.status_code == 429:
+                raise UVerifyApiError(
+                    "Faucet cooldown active (HTTP 429). "
+                    "This address recently received testnet funds. Please wait a few minutes before trying again.",
+                    429,
+                    e.response_body,
+                ) from e
+            raise
+
+
+# ---------------------------------------------------------------------------
+# Polling utility
+# ---------------------------------------------------------------------------
+
+
+def wait_for(
+    condition: Callable[[], bool],
+    timeout_ms: int = 60_000,
+    interval_ms: int = 2_000,
+) -> None:
+    """
+    Poll *condition* every *interval_ms* milliseconds until it returns ``True``,
+    or raise :exc:`TimeoutError` once *timeout_ms* has elapsed.
+
+    Useful for waiting on eventual-consistency operations such as faucet funds
+    settling on-chain or a submitted certificate becoming queryable.
+
+    Args:
+        condition:    Callable that returns ``True`` when the wait should stop.
+        timeout_ms:   Maximum wait in milliseconds. Default: 60 000 (1 min).
+        interval_ms:  Delay between polls in milliseconds. Default: 2 000 (2 s).
+
+    Raises:
+        TimeoutError: If *condition* does not return ``True`` within *timeout_ms*.
+
+    Example::
+
+        from uverify_sdk import UVerifyClient, wait_for
+
+        client = UVerifyClient()
+
+        # Wait until a certificate is queryable after issuance
+        wait_for(lambda: len(client.verify(data_hash)) > 0)
+
+        # Wait until faucet funds settle with a custom timeout
+        client.fund_wallet("addr_test1...", sign_message)
+        wait_for(lambda: len(client.verify(data_hash)) > 0, timeout_ms=120_000)
+    """
+    import time
+
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    while time.monotonic() < deadline:
+        if condition():
+            return
+        time.sleep(interval_ms / 1000.0)
+    raise TimeoutError(f"wait_for timed out after {timeout_ms} ms")

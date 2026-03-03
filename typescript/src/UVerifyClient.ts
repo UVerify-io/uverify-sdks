@@ -10,6 +10,9 @@ import type {
   ExecuteUserActionRequest,
   ExecuteUserActionResponse,
   UserState,
+  FaucetChallengeResponse,
+  FaucetClaimRequest,
+  FaucetClaimResponse,
 } from './types/index.js';
 
 /**
@@ -56,7 +59,7 @@ export type MessageSignCallback = (
  */
 export type TransactionSignCallback = (unsignedTx: string) => Promise<string>;
 
-const DEFAULT_BASE_URL = 'https://api.uverify.io';
+const DEFAULT_BASE_URL = 'https://api.preprod.uverify.io';
 
 /**
  * Low-level API surface, accessible via {@link UVerifyClient.core}.
@@ -97,6 +100,27 @@ export interface UVerifyCore {
    * This is step 2 of the two-step flow.
    */
   executeUserAction(request: ExecuteUserActionRequest): Promise<ExecuteUserActionResponse>;
+
+  /**
+   * Request a faucet challenge message from the server.
+   *
+   * This is step 1 of the two-step faucet flow. The returned `message` must be
+   * signed by the user's wallet (CIP-30 `signData`) before calling
+   * {@link claimFaucetFunds}.
+   *
+   * Only available when the backend is configured with `FAUCET_ENABLED=true`.
+   */
+  requestFaucetChallenge(address: string): Promise<FaucetChallengeResponse>;
+
+  /**
+   * Claim testnet ADA from the faucet using the signed challenge.
+   *
+   * This is step 2 of the two-step faucet flow. Returns the Cardano transaction
+   * hash of the faucet transfer on success.
+   *
+   * Only available when the backend is configured with `FAUCET_ENABLED=true`.
+   */
+  claimFaucetFunds(request: FaucetClaimRequest): Promise<FaucetClaimResponse>;
 }
 
 export interface UVerifyClientOptions {
@@ -180,6 +204,8 @@ export class UVerifyClient {
       submitTransaction: this._submitTransaction.bind(this),
       requestUserAction: this._requestUserAction.bind(this),
       executeUserAction: this._executeUserAction.bind(this),
+      requestFaucetChallenge: this._requestFaucetChallenge.bind(this),
+      claimFaucetFunds: this._claimFaucetFunds.bind(this),
     };
   }
 
@@ -318,6 +344,14 @@ export class UVerifyClient {
       '/api/v1/user/state/action',
       request
     );
+  }
+
+  private _requestFaucetChallenge(address: string): Promise<FaucetChallengeResponse> {
+    return this.post<FaucetChallengeResponse>('/api/v1/faucet/request', { address });
+  }
+
+  private _claimFaucetFunds(request: FaucetClaimRequest): Promise<FaucetClaimResponse> {
+    return this.post<FaucetClaimResponse>('/api/v1/faucet/claim', request);
   }
 
   // ---------------------------------------------------------------------------
@@ -472,6 +506,77 @@ export class UVerifyClient {
     });
   }
 
+  /**
+   * Fund a wallet with testnet ADA from the UVerify dev faucet in a single step.
+   *
+   * Orchestrates the full challenge-sign-claim flow:
+   * 1. Requests a server-signed challenge for `address`.
+   * 2. Passes the challenge message to `signMessage` (CIP-30 `signData`).
+   * 3. Submits both signatures to the faucet claim endpoint.
+   *
+   * Returns the Cardano transaction hash of the faucet transfer on success.
+   * Use {@link waitFor} to poll until the funds are queryable on-chain.
+   *
+   * **Only available when the backend is configured with `FAUCET_ENABLED=true`.**
+   * This is intended for testnet development environments only.
+   *
+   * @param address     Cardano address that should receive the testnet funds.
+   * @param signMessage Callback to sign the challenge message. Falls back to
+   *                    the `signMessage` option passed to the constructor.
+   *
+   * @example CIP-30 browser wallet
+   * ```ts
+   * const result = await client.fundWallet(
+   *   'addr_test1...',
+   *   async (message) => {
+   *     const hexAddress = await api.getChangeAddress();
+   *     const hexMessage = Buffer.from(message).toString('hex');
+   *     return api.signData(hexAddress, hexMessage);
+   *   }
+   * );
+   * console.log('Funded by tx:', result.txHash);
+   * ```
+   */
+  async fundWallet(
+    address: string,
+    signMessage?: MessageSignCallback
+  ): Promise<FaucetClaimResponse> {
+    const sign = this._resolveMessageCallback(signMessage);
+    try {
+      const challenge = await this.core.requestFaucetChallenge(address);
+      const { key, signature } = await sign(challenge.message);
+      return await this.core.claimFaucetFunds({
+        address,
+        message: challenge.message,
+        signature: challenge.signature,
+        userSignature: signature,
+        userPublicKey: key,
+        timestamp: challenge.timestamp,
+      });
+    } catch (err) {
+      if (err instanceof UVerifyApiError) {
+        if (err.statusCode === 404) {
+          throw new UVerifyApiError(
+            'Faucet endpoint not found (HTTP 404). ' +
+              'The faucet is only available on backends started with FAUCET_ENABLED=true. ' +
+              'This feature does not exist on mainnet — acquire ADA from a cryptocurrency exchange instead.',
+            404,
+            err.responseBody
+          );
+        }
+        if (err.statusCode === 429) {
+          throw new UVerifyApiError(
+            'Faucet cooldown active (HTTP 429). ' +
+              'This address recently received testnet funds. Please wait a few minutes before trying again.',
+            429,
+            err.responseBody
+          );
+        }
+      }
+      throw err;
+    }
+  }
+
   private _resolveMessageCallback(
     override?: MessageSignCallback
   ): MessageSignCallback {
@@ -497,4 +602,50 @@ export class UVerifyClient {
     }
     return cb;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Polling utility
+// ---------------------------------------------------------------------------
+
+/**
+ * Polls `condition` every `intervalMs` milliseconds until it returns `true`,
+ * or rejects once `timeoutMs` has elapsed.
+ *
+ * Useful for waiting on eventual-consistency operations such as faucet funds
+ * settling on-chain or a submitted certificate becoming queryable.
+ *
+ * @param condition   Async predicate — return `true` to stop polling.
+ * @param timeoutMs   Maximum wait in milliseconds. Default: 60 000 (1 min).
+ * @param intervalMs  Delay between polls in milliseconds. Default: 2 000 (2 s).
+ *
+ * @example Wait until a certificate is queryable after issuance
+ * ```ts
+ * import { UVerifyClient, waitFor } from '@uverify/sdk';
+ *
+ * const client = new UVerifyClient();
+ * await client.issueCertificates(address, certs, signTx);
+ * await waitFor(() => client.verify(dataHash).then((c) => c.length > 0));
+ * ```
+ *
+ * @example Wait until faucet funds settle with a custom timeout
+ * ```ts
+ * await client.fundWallet(address, signMessage);
+ * await waitFor(
+ *   () => client.verify(dataHash).then((c) => c.length > 0),
+ *   120_000, // 2-minute timeout
+ * );
+ * ```
+ */
+export async function waitFor(
+  condition: () => Promise<boolean>,
+  timeoutMs = 60_000,
+  intervalMs = 2_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await condition()) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(`waitFor timed out after ${timeoutMs} ms`);
 }

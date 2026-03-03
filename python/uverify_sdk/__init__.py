@@ -10,7 +10,7 @@ Quick start::
     print(certificates)
 """
 
-from .client import DataSignature, MessageSignCallback, TransactionSignCallback, UVerifyClient, UVerifyCore
+from .client import DataSignature, MessageSignCallback, TransactionSignCallback, UVerifyClient, UVerifyCore, wait_for
 from .exceptions import UVerifyApiError, UVerifyError, UVerifyValidationError
 from .models import (
     BuildStatus,
@@ -20,6 +20,9 @@ from .models import (
     CertificateResponse,
     ExecuteUserActionRequest,
     ExecuteUserActionResponse,
+    FaucetChallengeResponse,
+    FaucetClaimRequest,
+    FaucetClaimResponse,
     TransactionType,
     UserAction,
     UserActionRequest,
@@ -35,6 +38,7 @@ __all__ = [
     "DataSignature",
     "MessageSignCallback",
     "TransactionSignCallback",
+    "wait_for",
     "UVerifyError",
     "UVerifyApiError",
     "UVerifyValidationError",
@@ -51,4 +55,7 @@ __all__ = [
     "ExecuteUserActionResponse",
     "UserState",
     "UVerifyCertificate",
+    "FaucetChallengeResponse",
+    "FaucetClaimRequest",
+    "FaucetClaimResponse",
 ]
