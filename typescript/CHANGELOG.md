@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/UVerify-io/uverify-sdks/compare/typescript-v0.1.1...typescript-v0.1.2) (2026-03-03)
+
+
+### Features
+
+* add faucet endpoint support ([f8ecff4](https://github.com/UVerify-io/uverify-sdks/commit/f8ecff4778f2111788f787828f26d67e53481964))
+
 ## [0.1.1](https://github.com/UVerify-io/uverify-sdks/compare/typescript-v0.1.0...typescript-v0.1.1) (2026-02-22)
 
 

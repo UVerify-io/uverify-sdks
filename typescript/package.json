@@ -1,6 +1,6 @@
 {
   "name": "@uverify/sdk",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Official TypeScript/JavaScript SDK for the UVerify API",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
