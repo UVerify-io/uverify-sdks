@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/UVerify-io/uverify-sdks/compare/java-v0.1.2...java-v0.1.3) (2026-03-05)
+
+
+### Features
+
+* waitFor does now throw a timeout error in case the transaction didn't settle in time ([6072841](https://github.com/UVerify-io/uverify-sdks/commit/6072841cfcad2e00a395656575359b3573082e0f))
+
 ## [0.1.2](https://github.com/UVerify-io/uverify-sdks/compare/java-v0.1.1...java-v0.1.2) (2026-03-03)
 
 
