@@ -11,9 +11,16 @@
       "package-name": "@uverify/sdk"
     },
     "java": {
-      "release-type": "maven",
+      "release-type": "simple",
       "component": "java",
-      "package-name": "uverify-sdk"
+      "package-name": "uverify-sdk",
+      "extra-files": [
+        {
+          "type": "xml",
+          "path": "pom.xml",
+          "xpath": "//project/version"
+        }
+      ]
     },
     "python": {
       "release-type": "python",
