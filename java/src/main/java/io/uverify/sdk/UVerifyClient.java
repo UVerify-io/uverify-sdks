@@ -7,6 +7,7 @@ import io.uverify.sdk.callback.DataSignature;
 import io.uverify.sdk.callback.MessageSignCallback;
 import io.uverify.sdk.callback.TransactionSignCallback;
 import io.uverify.sdk.exception.UVerifyException;
+import io.uverify.sdk.exception.UVerifyTimeoutException;
 import io.uverify.sdk.exception.UVerifyValidationException;
 import io.uverify.sdk.model.*;
 
@@ -601,8 +602,8 @@ public class UVerifyClient {
      * @param condition   Returns {@code true} when polling should stop.
      * @param timeoutMs   Maximum wait in milliseconds.
      * @param intervalMs  Delay between polls in milliseconds.
-     * @throws Exception        if {@code condition} throws.
-     * @throws RuntimeException if the timeout is reached.
+     * @throws Exception               if {@code condition} throws.
+     * @throws UVerifyTimeoutException if the timeout is reached.
      */
     public static void waitFor(
             Callable<Boolean> condition,
@@ -613,14 +614,14 @@ public class UVerifyClient {
             if (Boolean.TRUE.equals(condition.call())) return;
             Thread.sleep(intervalMs);
         }
-        throw new RuntimeException("waitFor timed out after " + timeoutMs + " ms");
+        throw new UVerifyTimeoutException(timeoutMs);
     }
 
     /**
      * Overload with defaults: 60-second timeout, 2-second poll interval.
      *
-     * @throws Exception        if {@code condition} throws.
-     * @throws RuntimeException if the timeout is reached.
+     * @throws Exception               if {@code condition} throws.
+     * @throws UVerifyTimeoutException if the timeout is reached.
      */
     public static void waitFor(Callable<Boolean> condition) throws Exception {
         waitFor(condition, 60_000, 2_000);

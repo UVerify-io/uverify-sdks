@@ -19,3 +19,25 @@ class UVerifyApiError(UVerifyError):
 
 class UVerifyValidationError(UVerifyError):
     """Raised when a required parameter is missing or has an invalid value."""
+
+
+class UVerifyTimeoutError(UVerifyError):
+    """Raised by :func:`~uverify_sdk.wait_for` when the condition is not met within the timeout.
+
+    Catch this specifically to distinguish a timeout from other errors::
+
+        from uverify_sdk import wait_for, UVerifyTimeoutError
+
+        try:
+            wait_for(lambda: len(client.verify(hash)) > 0, timeout_ms=300_000)
+        except UVerifyTimeoutError as e:
+            print(e)  # advises the user to re-run
+    """
+
+    def __init__(self, timeout_ms: int) -> None:
+        super().__init__(
+            f"Transaction not confirmed within {timeout_ms // 1000} seconds. "
+            "The transaction may still be processing — please re-run the script. "
+            "If this happens repeatedly, increase the timeout value."
+        )
+        self.timeout_ms = timeout_ms

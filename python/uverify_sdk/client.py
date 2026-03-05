@@ -523,26 +523,25 @@ def wait_for(
         interval_ms:  Delay between polls in milliseconds. Default: 2 000 (2 s).
 
     Raises:
-        TimeoutError: If *condition* does not return ``True`` within *timeout_ms*.
+        UVerifyTimeoutError: If *condition* does not return ``True`` within *timeout_ms*.
 
     Example::
 
-        from uverify_sdk import UVerifyClient, wait_for
+        from uverify_sdk import UVerifyClient, wait_for, UVerifyTimeoutError
 
         client = UVerifyClient()
 
-        # Wait until a certificate is queryable after issuance
-        wait_for(lambda: len(client.verify(data_hash)) > 0)
-
-        # Wait until faucet funds settle with a custom timeout
-        client.fund_wallet("addr_test1...", sign_message)
-        wait_for(lambda: len(client.verify(data_hash)) > 0, timeout_ms=120_000)
+        try:
+            wait_for(lambda: len(client.verify(data_hash)) > 0, timeout_ms=300_000)
+        except UVerifyTimeoutError as e:
+            print(e)  # advises the user to re-run
     """
     import time
+    from .exceptions import UVerifyTimeoutError
 
     deadline = time.monotonic() + timeout_ms / 1000.0
     while time.monotonic() < deadline:
         if condition():
             return
         time.sleep(interval_ms / 1000.0)
-    raise TimeoutError(f"wait_for timed out after {timeout_ms} ms")
+    raise UVerifyTimeoutError(timeout_ms)

@@ -1,4 +1,4 @@
-import { UVerifyApiError, UVerifyValidationError } from './errors.js';
+import { UVerifyApiError, UVerifyValidationError, WaitForTimeoutError } from './errors.js';
 import type {
   CertificateData,
   CertificateResponse,
@@ -647,5 +647,5 @@ export async function waitFor(
     if (await condition()) return;
     await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
   }
-  throw new Error(`waitFor timed out after ${timeoutMs} ms`);
+  throw new WaitForTimeoutError(timeoutMs);
 }

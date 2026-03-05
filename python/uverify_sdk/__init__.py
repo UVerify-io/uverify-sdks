@@ -11,7 +11,7 @@ Quick start::
 """
 
 from .client import DataSignature, MessageSignCallback, TransactionSignCallback, UVerifyClient, UVerifyCore, wait_for
-from .exceptions import UVerifyApiError, UVerifyError, UVerifyValidationError
+from .exceptions import UVerifyApiError, UVerifyError, UVerifyTimeoutError, UVerifyValidationError
 from .models import (
     BuildStatus,
     BuildTransactionRequest,
