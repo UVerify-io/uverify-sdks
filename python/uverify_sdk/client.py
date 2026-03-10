@@ -9,6 +9,7 @@ _T = TypeVar("_T")
 
 import requests
 
+from .apps import UVerifyApps
 from .exceptions import UVerifyApiError, UVerifyValidationError
 from .models.certificate import CertificateData, CertificateResponse
 from .models.transaction import (
@@ -82,9 +83,9 @@ class UVerifyCore:
 
     def submit_transaction(
         self, transaction: str, witness_set: Optional[str] = None
-    ) -> None:
-        """Submit a signed transaction to the Cardano blockchain."""
-        self._client._submit_transaction(transaction, witness_set)
+    ) -> str:
+        """Submit a signed transaction to the Cardano blockchain. Returns the transaction hash."""
+        return self._client._submit_transaction(transaction, witness_set)
 
     def request_user_action(
         self, request: UserActionRequest
@@ -158,6 +159,7 @@ class UVerifyClient:
         session: Optional[requests.Session] = None,
         sign_message: Optional[MessageSignCallback] = None,
         sign_tx: Optional[TransactionSignCallback] = None,
+        verify_base_url: Optional[str] = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
@@ -170,6 +172,12 @@ class UVerifyClient:
         self._default_sign_message = sign_message
         self._default_sign_tx = sign_tx
         self.core = UVerifyCore(self)
+        _verify_base_url = verify_base_url or (
+            "https://app.preprod.uverify.io/verify"
+            if "preprod" in self._base_url
+            else "https://app.uverify.io/verify"
+        )
+        self.apps = UVerifyApps(self.issue_certificates, _verify_base_url)
 
     # -------------------------------------------------------------------------
     # Internal HTTP helpers
@@ -238,11 +246,17 @@ class UVerifyClient:
 
     def _submit_transaction(
         self, transaction: str, witness_set: Optional[str] = None
-    ) -> None:
+    ) -> str:
         body: dict = {"transaction": transaction}
         if witness_set is not None:
             body["witnessSet"] = witness_set
-        self._post("/api/v1/transaction/submit", body)
+        data = self._post("/api/v1/transaction/submit", body)
+        tx_hash = (data or {}).get("transactionHash") or (data or {}).get("value")
+        if not tx_hash:
+            raise UVerifyValidationError(
+                "Submit endpoint did not return a transaction hash"
+            )
+        return tx_hash
 
     def _request_user_action(
         self, request: UserActionRequest
@@ -309,12 +323,7 @@ class UVerifyClient:
             for cert in certs:
                 print(cert.transaction_hash, cert.creation_time)
         """
-        try:
-            data = self._get(f"/api/v1/verify/{hash}")
-        except UVerifyApiError as e:
-            if e.status_code == 404:
-                return []
-            raise
+        data = self._get(f"/api/v1/verify/{hash}")
         return [CertificateResponse.from_dict(item) for item in (data or [])]
 
     def verify_by_transaction(
@@ -342,7 +351,7 @@ class UVerifyClient:
         certificates: List[CertificateData],
         sign_tx: Optional[TransactionSignCallback] = None,
         state_id: Optional[str] = None,
-    ) -> None:
+    ) -> str:
         """
         Build and submit a certificate issuance transaction.
 
@@ -355,13 +364,16 @@ class UVerifyClient:
             sign_tx:      Wallet callback; falls back to constructor-level default.
             state_id:     Existing state ID. Omit for bootstrap flow.
 
+        Returns:
+            The Cardano transaction hash of the submitted transaction.
+
         Raises:
             :exc:`~uverify_sdk.exceptions.UVerifyValidationError`:
                 If no ``sign_tx`` callback is available.
 
         Example::
 
-            client.issue_certificates(
+            tx_hash = client.issue_certificates(
                 address="addr1...",
                 certificates=[CertificateData(hash="sha256-hash", algorithm="SHA-256")],
             )
@@ -379,8 +391,7 @@ class UVerifyClient:
             try:
                 response = self._build_transaction(request)
                 witness_set = cb(response.unsigned_transaction)
-                self._submit_transaction(response.unsigned_transaction, witness_set)
-                return
+                return self._submit_transaction(response.unsigned_transaction, witness_set)
             except UVerifyApiError as exc:
                 last_error = exc
                 if attempt < max_attempts:

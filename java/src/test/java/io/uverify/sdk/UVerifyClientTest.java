@@ -127,7 +127,7 @@ class UVerifyClientTest {
 
     @Test
     void core_submitTransaction_sendsPost() throws Exception {
-        doReturn(mockResponse(200, "")).when(mockHttpClient).send(any(), any());
+        doReturn(mockResponse(200, Map.of("transactionHash", "mock-tx-hash"))).when(mockHttpClient).send(any(), any());
 
         assertDoesNotThrow(() -> client.core.submitTransaction("signed-tx", "witness-set"));
         verify(mockHttpClient).send(any(HttpRequest.class), any());
@@ -174,7 +174,7 @@ class UVerifyClientTest {
     void issueCertificates_buildsAndSubmitsTransaction() throws Exception {
         Map<String, Object> buildBody = Map.of("unsignedTransaction", "unsigned-cbor", "type", "bootstrap");
         HttpResponse<String> resp1 = mockResponse(200, buildBody);
-        HttpResponse<String> resp2 = mockResponse(200, "");
+        HttpResponse<String> resp2 = mockResponse(200, Map.of("transactionHash", "mock-tx-hash"));
         doReturn(resp1).doReturn(resp2).when(mockHttpClient).send(any(), any());
 
         client.issueCertificates(
@@ -189,7 +189,7 @@ class UVerifyClientTest {
     void issueCertificates_withStateId_usesDefaultType() throws Exception {
         Map<String, Object> buildBody = Map.of("unsignedTransaction", "unsigned-cbor", "type", "default");
         HttpResponse<String> resp1 = mockResponse(200, buildBody);
-        HttpResponse<String> resp2 = mockResponse(200, "");
+        HttpResponse<String> resp2 = mockResponse(200, Map.of("transactionHash", "mock-tx-hash"));
         doReturn(resp1).doReturn(resp2).when(mockHttpClient).send(any(), any());
 
         client.issueCertificates(
@@ -210,7 +210,7 @@ class UVerifyClientTest {
 
         Map<String, Object> buildBody = Map.of("unsignedTransaction", "unsigned-cbor", "type", "bootstrap");
         HttpResponse<String> resp1 = mockResponse(200, buildBody);
-        HttpResponse<String> resp2 = mockResponse(200, "");
+        HttpResponse<String> resp2 = mockResponse(200, Map.of("transactionHash", "mock-tx-hash"));
         doReturn(resp1).doReturn(resp2).when(mockHttpClient).send(any(), any());
 
         assertDoesNotThrow(() -> clientWithCallback.issueCertificates(

@@ -306,12 +306,7 @@ export class UVerifyClient {
    * ```
    */
   async verify(hash: string): Promise<CertificateResponse[]> {
-    try {
-      return await this.get<CertificateResponse[]>(`/api/v1/verify/${hash}`);
-    } catch (err) {
-      if (err instanceof UVerifyApiError && err.statusCode === 404) return [];
-      throw err;
-    }
+    return this.get<CertificateResponse[]>(`/api/v1/verify/${hash}`);
   }
 
   /**
