@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.4](https://github.com/UVerify-io/uverify-sdks/compare/python-v0.1.3...python-v0.1.4) (2026-03-10)
+
+
+### Features
+
+* add a high level app api to publish lab reports or digital product passports directly ([c625618](https://github.com/UVerify-io/uverify-sdks/commit/c6256186ddb58ab083d8de19d36341bdf8f8bcdc))
+* add high level apis for java and python ([18c96c0](https://github.com/UVerify-io/uverify-sdks/commit/18c96c0daa8b5be1f16728d919abc0a321e3387a))
+
 ## [0.1.3](https://github.com/UVerify-io/uverify-sdks/compare/python-v0.1.2...python-v0.1.3) (2026-03-05)
 
 
