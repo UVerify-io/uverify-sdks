@@ -39,8 +39,9 @@ public interface UVerifyCore {
      *
      * @param transaction CBOR-hex encoded signed transaction.
      * @param witnessSet  Optional separate witness set in CBOR-hex (may be {@code null}).
+     * @return The Cardano transaction hash of the submitted transaction.
      */
-    void submitTransaction(String transaction, String witnessSet);
+    String submitTransaction(String transaction, String witnessSet);
 
     /**
      * Create a server-signed action request that the user must countersign (step 1).

@@ -3,6 +3,7 @@ package io.uverify.sdk;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.uverify.sdk.apps.UVerifyApps;
 import io.uverify.sdk.callback.DataSignature;
 import io.uverify.sdk.callback.MessageSignCallback;
 import io.uverify.sdk.callback.TransactionSignCallback;
@@ -74,6 +75,13 @@ public class UVerifyClient {
      */
     public final UVerifyCore core;
 
+    /**
+     * High-level application helpers for issuing well-known certificate types.
+     *
+     * @see UVerifyApps
+     */
+    public final UVerifyApps apps;
+
     private UVerifyClient(Builder builder) {
         this.baseUrl = builder.baseUrl.replaceAll("/$", "");
         this.httpClient = builder.httpClient != null
@@ -92,8 +100,8 @@ public class UVerifyClient {
             }
 
             @Override
-            public void submitTransaction(String transaction, String witnessSet) {
-                submitTransactionInternal(transaction, witnessSet);
+            public String submitTransaction(String transaction, String witnessSet) {
+                return submitTransactionInternal(transaction, witnessSet);
             }
 
             @Override
@@ -116,6 +124,15 @@ public class UVerifyClient {
                 return claimFaucetFundsInternal(request);
             }
         };
+
+        String verifyBaseUrl = builder.verifyBaseUrl != null
+                ? builder.verifyBaseUrl
+                : (this.baseUrl.contains("preprod")
+                        ? "https://app.preprod.uverify.io/verify"
+                        : "https://app.uverify.io/verify");
+        this.apps = new UVerifyApps(
+                (addr, certs, signTx) -> issueCertificates(addr, null, certs, signTx),
+                verifyBaseUrl);
     }
 
     // -------------------------------------------------------------------------
@@ -139,6 +156,7 @@ public class UVerifyClient {
         private MessageSignCallback signMessage;
         private TransactionSignCallback signTx;
         private HttpClient httpClient;
+        private String verifyBaseUrl;
 
         private Builder() {}
 
@@ -183,6 +201,16 @@ public class UVerifyClient {
          */
         public Builder httpClient(HttpClient httpClient) {
             this.httpClient = httpClient;
+            return this;
+        }
+
+        /**
+         * Override the base URL used to construct verification links returned by
+         * {@link UVerifyClient#apps}. Defaults to the preprod or production app URL
+         * based on the API base URL.
+         */
+        public Builder verifyBaseUrl(String verifyBaseUrl) {
+            this.verifyBaseUrl = verifyBaseUrl;
             return this;
         }
 
@@ -318,11 +346,19 @@ public class UVerifyClient {
         return post("/api/v1/transaction/build", request, BuildTransactionResponse.class);
     }
 
-    private void submitTransactionInternal(String transaction, String witnessSet) {
+    @SuppressWarnings("unchecked")
+    private String submitTransactionInternal(String transaction, String witnessSet) {
         Map<String, Object> body = new HashMap<>();
         body.put("transaction", transaction);
         if (witnessSet != null) body.put("witnessSet", witnessSet);
-        post("/api/v1/transaction/submit", body);
+        Map<String, Object> result = post(
+                "/api/v1/transaction/submit", body,
+                new TypeReference<Map<String, Object>>() {});
+        Object hash = result != null ? result.getOrDefault("transactionHash", result.get("value")) : null;
+        if (hash == null) {
+            throw new UVerifyValidationException("Submit endpoint did not return a transaction hash");
+        }
+        return (String) hash;
     }
 
     private UserActionRequestResponse requestUserActionInternal(UserActionRequest request) {
@@ -403,21 +439,23 @@ public class UVerifyClient {
      * @param address      Cardano address of the signer.
      * @param certificates Certificates to issue.
      * @param signTx       Wallet callback to sign the unsigned transaction.
+     * @return The Cardano transaction hash of the submitted transaction.
      */
-    public void issueCertificates(
+    public String issueCertificates(
             String address,
             List<CertificateData> certificates,
             TransactionSignCallback signTx) {
-        issueCertificates(address, null, certificates, signTx);
+        return issueCertificates(address, null, certificates, signTx);
     }
 
     /**
      * Issue certificates using the bootstrap flow with the constructor-level callback.
      *
+     * @return The Cardano transaction hash of the submitted transaction.
      * @throws UVerifyValidationException if no sign callback was configured.
      */
-    public void issueCertificates(String address, List<CertificateData> certificates) {
-        issueCertificates(address, null, certificates, null);
+    public String issueCertificates(String address, List<CertificateData> certificates) {
+        return issueCertificates(address, null, certificates, null);
     }
 
     /**
@@ -427,8 +465,9 @@ public class UVerifyClient {
      * @param stateId      Existing state ID ({@code null} triggers bootstrap flow).
      * @param certificates Certificates to issue.
      * @param signTx       Wallet callback ({@code null} uses constructor-level default).
+     * @return The Cardano transaction hash of the submitted transaction.
      */
-    public void issueCertificates(
+    public String issueCertificates(
             String address,
             String stateId,
             List<CertificateData> certificates,
@@ -445,8 +484,7 @@ public class UVerifyClient {
             try {
                 BuildTransactionResponse response = buildTransactionInternal(request);
                 String witnessSet = cb.sign(response.getUnsignedTransaction());
-                submitTransactionInternal(response.getUnsignedTransaction(), witnessSet);
-                return;
+                return submitTransactionInternal(response.getUnsignedTransaction(), witnessSet);
             } catch (UVerifyException e) {
                 lastError = e;
                 if (attempt < maxAttempts) {
@@ -467,11 +505,12 @@ public class UVerifyClient {
     /**
      * Issue certificates into an existing state using the constructor-level callback.
      *
+     * @return The Cardano transaction hash of the submitted transaction.
      * @throws UVerifyValidationException if no sign callback was configured.
      */
-    public void issueCertificates(
+    public String issueCertificates(
             String address, String stateId, List<CertificateData> certificates) {
-        issueCertificates(address, stateId, certificates, null);
+        return issueCertificates(address, stateId, certificates, null);
     }
 
     /**

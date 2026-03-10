@@ -1,8 +1,9 @@
 """Certificate-related data models."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Optional
+import json as _json
+from dataclasses import dataclass
+from typing import Dict, Optional, Union
 
 
 @dataclass
@@ -12,18 +13,23 @@ class CertificateData:
 
     Attributes:
         hash:      SHA-256 or SHA-512 hex hash of the data to certify.
-        metadata:  Optional metadata string to attach.
+        metadata:  Optional metadata to attach — either a pre-serialised JSON
+                   string or a plain ``dict`` (automatically serialised).
         algorithm: Hashing algorithm, e.g. "SHA-256" or "SHA-512".
     """
 
     hash: str
-    metadata: Optional[str] = None
+    metadata: Optional[Union[str, Dict[str, str]]] = None
     algorithm: Optional[str] = None
 
     def to_dict(self) -> dict:
         d: dict = {"hash": self.hash}
         if self.metadata is not None:
-            d["metadata"] = self.metadata
+            d["metadata"] = (
+                _json.dumps(self.metadata)
+                if isinstance(self.metadata, dict)
+                else self.metadata
+            )
         if self.algorithm is not None:
             d["algorithm"] = self.algorithm
         return d

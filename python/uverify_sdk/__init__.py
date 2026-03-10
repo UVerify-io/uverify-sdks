@@ -10,6 +10,17 @@ Quick start::
     print(certificates)
 """
 
+from .apps import (
+    UVerifyApps,
+    DiplomaInput,
+    DiplomaResult,
+    DiplomaCertificateResult,
+    DigitalProductPassportInput,
+    DigitalProductPassportResult,
+    LaboratoryReportInput,
+    LaboratoryReportResult,
+    LaboratoryReportCertificateResult,
+)
 from .client import DataSignature, MessageSignCallback, TransactionSignCallback, UVerifyClient, UVerifyCore, wait_for
 from .exceptions import UVerifyApiError, UVerifyError, UVerifyTimeoutError, UVerifyValidationError
 from .models import (
@@ -35,6 +46,15 @@ __version__ = "0.1.3"
 __all__ = [
     "UVerifyClient",
     "UVerifyCore",
+    "UVerifyApps",
+    "DiplomaInput",
+    "DiplomaResult",
+    "DiplomaCertificateResult",
+    "DigitalProductPassportInput",
+    "DigitalProductPassportResult",
+    "LaboratoryReportInput",
+    "LaboratoryReportResult",
+    "LaboratoryReportCertificateResult",
     "DataSignature",
     "MessageSignCallback",
     "TransactionSignCallback",
