@@ -14,8 +14,33 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v4
+      - name: 🎉 Create Release PR
+        uses: googleapis/release-please-action@v4
+        id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      - name: 📥 Checkout
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        uses: actions/checkout@v4
+
+      - name: 📝 Update Java POM Version
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        run: |
+          git fetch
+          if git checkout release-please--branches--main--components--java 2>/dev/null; then
+            git pull
+
+            NEW_VERSION=$(jq -r '."java"' .release-please-manifest.json)
+
+            git checkout origin/main -- java/pom.xml
+            sed -i '/<project/,/<version>/ s/<version>.*<\/version>/<version>'"$NEW_VERSION"'<\/version>/' java/pom.xml
+            git add java/pom.xml
+
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore: update java/pom.xml to version $NEW_VERSION"
+            git push origin HEAD
+          fi
