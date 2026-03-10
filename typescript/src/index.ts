@@ -1,4 +1,13 @@
-export { UVerifyClient, waitFor } from './UVerifyClient.js';
+export { UVerifyClient } from './UVerifyClient.js';
+export { UVerifyApps } from './apps/index.js';
+export type {
+  DiplomaInput,
+  DiplomaResult,
+  DigitalProductPassportInput,
+  DigitalProductPassportResult,
+  LaboratoryReportInput,
+  LaboratoryReportResult,
+} from './apps/index.js';
 export type {
   UVerifyClientOptions,
   UVerifyCore,

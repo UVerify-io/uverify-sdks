@@ -1,4 +1,5 @@
 import { UVerifyApiError, UVerifyValidationError, WaitForTimeoutError } from './errors.js';
+import { UVerifyApps } from './apps/index.js';
 import type {
   CertificateData,
   CertificateResponse,
@@ -155,6 +156,12 @@ export interface UVerifyClientOptions {
    * ```
    */
   signTx?: TransactionSignCallback;
+  /**
+   * Base URL used to construct verification links returned by {@link UVerifyClient.apps}.
+   * Defaults to `https://app.preprod.uverify.io/verify` when the API base URL contains
+   * `preprod`, and `https://app.uverify.io/verify` otherwise.
+   */
+  verifyBaseUrl?: string;
 }
 
 /**
@@ -190,6 +197,13 @@ export class UVerifyClient {
    */
   readonly core: UVerifyCore;
 
+  /**
+   * High-level application helpers for issuing well-known certificate types.
+   *
+   * @see {@link UVerifyApps}
+   */
+  readonly apps: UVerifyApps;
+
   constructor(options: UVerifyClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, '');
     this.defaultHeaders = {
@@ -207,6 +221,21 @@ export class UVerifyClient {
       requestFaucetChallenge: this._requestFaucetChallenge.bind(this),
       claimFaucetFunds: this._claimFaucetFunds.bind(this),
     };
+    // Bind public methods so they can be safely destructured from the client instance
+    this.verify = this.verify.bind(this);
+    this.verifyByTransaction = this.verifyByTransaction.bind(this);
+    this.issueCertificates = this.issueCertificates.bind(this);
+    this.getUserInfo = this.getUserInfo.bind(this);
+    this.invalidateState = this.invalidateState.bind(this);
+    this.optOut = this.optOut.bind(this);
+    this.fundWallet = this.fundWallet.bind(this);
+    this.waitFor = this.waitFor.bind(this);
+    const verifyBaseUrl =
+      options.verifyBaseUrl ??
+      (this.baseUrl.includes('preprod')
+        ? 'https://app.preprod.uverify.io/verify'
+        : 'https://app.uverify.io/verify');
+    this.apps = new UVerifyApps(this.issueCertificates, verifyBaseUrl);
   }
 
   // ---------------------------------------------------------------------------
@@ -230,11 +259,12 @@ export class UVerifyClient {
     const response = await fetch(url, init);
 
     if (!response.ok) {
+      const rawBody = await response.text();
       let responseBody: unknown;
       try {
-        responseBody = await response.json();
+        responseBody = JSON.parse(rawBody);
       } catch {
-        responseBody = await response.text();
+        responseBody = rawBody;
       }
       throw new UVerifyApiError(
         `UVerify API error ${response.status}: ${response.statusText}`,
@@ -275,8 +305,13 @@ export class UVerifyClient {
    * }
    * ```
    */
-  verify(hash: string): Promise<CertificateResponse[]> {
-    return this.get<CertificateResponse[]>(`/api/v1/verify/${hash}`);
+  async verify(hash: string): Promise<CertificateResponse[]> {
+    try {
+      return await this.get<CertificateResponse[]>(`/api/v1/verify/${hash}`);
+    } catch (err) {
+      if (err instanceof UVerifyApiError && err.statusCode === 404) return [];
+      throw err;
+    }
   }
 
   /**
@@ -321,11 +356,17 @@ export class UVerifyClient {
     transaction: string,
     witnessSet?: string
   ): Promise<string> {
-    const result = await this.post<{ transactionHash: string }>(
+    // `transactionHash` is the new field name (post backend fix);
+    // `value` is the raw bloxbean Result<String> field on older deployments.
+    const result = await this.post<{ transactionHash?: string; value?: string }>(
       '/api/v1/transaction/submit',
       { transaction, witnessSet }
     );
-    return result.transactionHash;
+    const hash = result.transactionHash ?? result.value;
+    if (!hash) {
+      throw new UVerifyValidationError('Submit endpoint did not return a transaction hash');
+    }
+    return hash;
   }
 
   private _requestUserAction(
@@ -402,14 +443,32 @@ export class UVerifyClient {
     stateId?: string
   ): Promise<string> {
     const cb = this._resolveTxCallback(signCallback);
-    const { unsignedTransaction } = await this._buildTransaction({
-      type: 'default',
-      address,
-      stateId,
-      certificates,
-    });
-    const witnessSet = await cb(unsignedTransaction);
-    return this._submitTransaction(unsignedTransaction, witnessSet);
+    const maxAttempts = 3;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const { unsignedTransaction } = await this._buildTransaction({
+          type: 'default',
+          address,
+          stateId,
+          certificates,
+        });
+        const witnessSet = await cb(unsignedTransaction);
+        return await this._submitTransaction(unsignedTransaction, witnessSet);
+      } catch (err) {
+        lastError = err;
+        if (err instanceof UVerifyApiError && attempt < maxAttempts) {
+          console.log(
+            `Certificate issuance failed (attempt ${attempt}/${maxAttempts}), ` +
+              `retrying in 5 s (waiting for chain state to propagate) …`
+          );
+          await new Promise<void>((resolve) => setTimeout(resolve, 5_000));
+        } else {
+          throw err;
+        }
+      }
+    }
+    throw lastError;
   }
 
   /**
@@ -540,12 +599,12 @@ export class UVerifyClient {
   async fundWallet(
     address: string,
     signMessage?: MessageSignCallback
-  ): Promise<FaucetClaimResponse> {
+  ): Promise<string> {
     const sign = this._resolveMessageCallback(signMessage);
     try {
       const challenge = await this.core.requestFaucetChallenge(address);
       const { key, signature } = await sign(challenge.message);
-      return await this.core.claimFaucetFunds({
+      const result = await this.core.claimFaucetFunds({
         address,
         message: challenge.message,
         signature: challenge.signature,
@@ -553,6 +612,10 @@ export class UVerifyClient {
         userPublicKey: key,
         timestamp: challenge.timestamp,
       });
+      if (!result.txHash) {
+        throw new UVerifyValidationError('Faucet did not return a transaction hash');
+      }
+      return result.txHash;
     } catch (err) {
       if (err instanceof UVerifyApiError) {
         if (err.statusCode === 404) {
@@ -575,6 +638,51 @@ export class UVerifyClient {
       }
       throw err;
     }
+  }
+
+  /**
+   * Wait for a submitted transaction to be confirmed on-chain.
+   *
+   * Polls `GET /api/v1/transaction/confirm/{txHash}` every `intervalMs`
+   * milliseconds until the backend reports the transaction as confirmed (HTTP 200).
+   *
+   * Pass the result of any SDK method that submits a transaction directly —
+   * {@link issueCertificates} or {@link fundWallet} — and `waitFor` resolves
+   * once the blockchain has confirmed it.
+   *
+   * @param txHashPromise - Promise that resolves to a Cardano transaction hash.
+   * @param timeoutMs     - Maximum wait in milliseconds. Default: 300 000 (5 min).
+   * @param intervalMs    - Polling interval in milliseconds. Default: 2 000 (2 s).
+   * @returns The confirmed transaction hash.
+   * @throws {@link WaitForTimeoutError} if the transaction is not confirmed in time.
+   *
+   * @example
+   * ```ts
+   * const txHash = await client.waitFor(
+   *   client.issueCertificates(address, certs)
+   * );
+   * console.log('Confirmed on-chain:', txHash);
+   * ```
+   */
+  async waitFor(
+    txHash: string,
+    timeoutMs = 300_000,
+    intervalMs = 2_000,
+  ): Promise<string> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        await this.get<void>(`/api/v1/transaction/confirm/${txHash}`);
+        return txHash;
+      } catch (err) {
+        if (err instanceof UVerifyApiError && err.statusCode === 404) {
+          await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new WaitForTimeoutError(timeoutMs);
   }
 
   private _resolveMessageCallback(
@@ -604,48 +712,3 @@ export class UVerifyClient {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Polling utility
-// ---------------------------------------------------------------------------
-
-/**
- * Polls `condition` every `intervalMs` milliseconds until it returns `true`,
- * or rejects once `timeoutMs` has elapsed.
- *
- * Useful for waiting on eventual-consistency operations such as faucet funds
- * settling on-chain or a submitted certificate becoming queryable.
- *
- * @param condition   Async predicate — return `true` to stop polling.
- * @param timeoutMs   Maximum wait in milliseconds. Default: 60 000 (1 min).
- * @param intervalMs  Delay between polls in milliseconds. Default: 2 000 (2 s).
- *
- * @example Wait until a certificate is queryable after issuance
- * ```ts
- * import { UVerifyClient, waitFor } from '@uverify/sdk';
- *
- * const client = new UVerifyClient();
- * await client.issueCertificates(address, certs, signTx);
- * await waitFor(() => client.verify(dataHash).then((c) => c.length > 0));
- * ```
- *
- * @example Wait until faucet funds settle with a custom timeout
- * ```ts
- * await client.fundWallet(address, signMessage);
- * await waitFor(
- *   () => client.verify(dataHash).then((c) => c.length > 0),
- *   120_000, // 2-minute timeout
- * );
- * ```
- */
-export async function waitFor(
-  condition: () => Promise<boolean>,
-  timeoutMs = 60_000,
-  intervalMs = 2_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await condition()) return;
-    await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
-  }
-  throw new WaitForTimeoutError(timeoutMs);
-}

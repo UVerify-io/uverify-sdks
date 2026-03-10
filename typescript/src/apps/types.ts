@@ -1,0 +1,137 @@
+/**
+ * Input for a single diploma certificate.
+ */
+export interface DiplomaInput {
+  /** Student or learner identifier — used as the on-chain fingerprint. */
+  studentId: string;
+  /** Recipient's full name (stored as SHA-256 hash on-chain, revealed via URL param). */
+  name: string;
+  /** Degree or qualification title shown on the certificate. */
+  degree: string;
+  /** Name of the issuing institution. */
+  institution: string;
+  /** Graduation or completion date (e.g. `'2024-06-28'`). */
+  graduationDate: string;
+  /** Optional honours distinction (e.g. `'Summa Cum Laude'`). */
+  honors?: string;
+}
+
+/**
+ * Result returned by {@link UVerifyApps.issueDiploma}.
+ */
+export interface DiplomaResult {
+  /** Cardano transaction hash of the issuance transaction. */
+  txHash: string;
+  certificates: Array<{
+    studentId: string;
+    name: string;
+    /** SHA-256 hash of `studentId` — the on-chain certificate fingerprint. */
+    hash: string;
+    /** Verification URL with `?name=` pre-populated to reveal the recipient's name. */
+    verifyUrl: string;
+  }>;
+}
+
+/**
+ * Input for a Digital Product Passport certificate.
+ */
+export interface DigitalProductPassportInput {
+  /** Product name shown on the passport. */
+  name: string;
+  /** Manufacturer or issuing organisation. */
+  manufacturer: string;
+  /** Global Trade Item Number (GTIN / barcode). */
+  gtin: string;
+  /** Unit-level serial number (stored as SHA-256 hash on-chain, revealed via URL param). */
+  serialNumber: string;
+  /** Model number or product line identifier. */
+  model?: string;
+  /** Country or place of manufacture. */
+  origin?: string;
+  /** Date of manufacture (e.g. `'2024-08-15'`). */
+  manufactured?: string;
+  /** Contact e-mail or URL for sustainability enquiries. */
+  contact?: string;
+  /** Brand accent colour as a hex string (e.g. `'#1a56db'`). */
+  brandColor?: string;
+  /** Carbon footprint (e.g. `'1.2 kg CO₂e'`). */
+  carbonFootprint?: string;
+  /** Percentage of recycled content (e.g. `'38%'`). */
+  recycledContent?: string;
+  /** EU energy class (e.g. `'A++'`). */
+  energyClass?: string;
+  /** Warranty period (e.g. `'3 years'`). */
+  warranty?: string;
+  /** Spare parts availability statement. */
+  spareParts?: string;
+  /** URL to repair instructions. */
+  repairInfo?: string;
+  /** End-of-life / recycling instructions. */
+  recycling?: string;
+  /**
+   * Material composition entries.
+   * Keys are plain material names — the `mat_` prefix is added automatically.
+   * @example `{ aluminum: '45%', recycled_plastic: '38%' }`
+   */
+  materials?: Record<string, string>;
+  /**
+   * Certification entries.
+   * Keys are plain identifiers — the `cert_` prefix is added automatically.
+   * @example `{ ce: 'CE Marking', rohs: 'RoHS Compliant' }`
+   */
+  certifications?: Record<string, string>;
+}
+
+/**
+ * Result returned by {@link UVerifyApps.issueDigitalProductPassport}.
+ */
+export interface DigitalProductPassportResult {
+  /** Cardano transaction hash of the issuance transaction. */
+  txHash: string;
+  /** SHA-256 hash of `gtin + serialNumber` — the on-chain certificate fingerprint. */
+  hash: string;
+  /** Verification URL with `?serial=` pre-populated to reveal the serial number. */
+  verifyUrl: string;
+}
+
+/**
+ * Input for a single laboratory report certificate.
+ */
+export interface LaboratoryReportInput {
+  /** Unique report identifier — used as the on-chain fingerprint. */
+  reportId: string;
+  /** Patient's full name (stored as SHA-256 hash on-chain, revealed via URL param). */
+  patientName: string;
+  /** Name of the issuing laboratory. */
+  labName: string;
+  /** Contact e-mail or institution for the full report. */
+  contact?: string;
+  /**
+   * Whether the measured values are publicly auditable.
+   * When `true`, the certificate page shows a transparency banner.
+   * Defaults to `false`.
+   */
+  auditable?: boolean;
+  /**
+   * Measured parameter values.
+   * Keys are plain parameter names — the `a_` prefix is added automatically.
+   * @example `{ glucose: '5.4 mmol/L', hba1c: '5.7%' }`
+   */
+  values: Record<string, string>;
+}
+
+/**
+ * Result returned by {@link UVerifyApps.issueLaboratoryReport}.
+ */
+export interface LaboratoryReportResult {
+  /** Cardano transaction hash of the issuance transaction. */
+  txHash: string;
+  certificates: Array<{
+    reportId: string;
+    patientName: string;
+    /** SHA-256 hash of `reportId` — the on-chain certificate fingerprint. */
+    hash: string;
+    /** Verification URL with `?name=` and `?report_id=` pre-populated. */
+    verifyUrl: string;
+  }>;
+}

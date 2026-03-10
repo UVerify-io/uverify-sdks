@@ -1,8 +1,11 @@
 """Main UVerify API client."""
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, TypeVar, Union
+
+_T = TypeVar("_T")
 
 import requests
 
@@ -306,7 +309,12 @@ class UVerifyClient:
             for cert in certs:
                 print(cert.transaction_hash, cert.creation_time)
         """
-        data = self._get(f"/api/v1/verify/{hash}")
+        try:
+            data = self._get(f"/api/v1/verify/{hash}")
+        except UVerifyApiError as e:
+            if e.status_code == 404:
+                return []
+            raise
         return [CertificateResponse.from_dict(item) for item in (data or [])]
 
     def verify_by_transaction(
@@ -365,9 +373,23 @@ class UVerifyClient:
             certificates=certificates,
             state_id=state_id,
         )
-        response = self._build_transaction(request)
-        witness_set = cb(response.unsigned_transaction)
-        self._submit_transaction(response.unsigned_transaction, witness_set)
+        max_attempts = 3
+        last_error: Optional[Exception] = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = self._build_transaction(request)
+                witness_set = cb(response.unsigned_transaction)
+                self._submit_transaction(response.unsigned_transaction, witness_set)
+                return
+            except UVerifyApiError as exc:
+                last_error = exc
+                if attempt < max_attempts:
+                    print(
+                        f"Certificate issuance failed (attempt {attempt}/{max_attempts}), "
+                        "retrying in 5 s (waiting for chain state to propagate) …"
+                    )
+                    time.sleep(5)
+        raise last_error  # type: ignore[misc]
 
     def get_user_info(
         self,
@@ -506,26 +528,33 @@ class UVerifyClient:
 
 
 def wait_for(
-    condition: Callable[[], bool],
+    condition: Callable[[], Union[_T, bool]],
     timeout_ms: int = 60_000,
     interval_ms: int = 2_000,
-) -> None:
+) -> _T:
     """
-    Poll *condition* every *interval_ms* milliseconds until it returns ``True``,
-    or raise :exc:`TimeoutError` once *timeout_ms* has elapsed.
+    Poll *condition* every *interval_ms* milliseconds until it returns a
+    non-``False`` value, then return that value.
 
-    Useful for waiting on eventual-consistency operations such as faucet funds
-    settling on-chain or a submitted certificate becoming queryable.
+    Return ``False`` (the boolean literal) from your condition to keep
+    polling; return any other value — including ``True``, an object, or a
+    list — to stop and return it. Errors raised by the condition propagate
+    immediately without retrying.
 
     Args:
-        condition:    Callable that returns ``True`` when the wait should stop.
+        condition:    Callable that returns ``False`` to keep polling, or any
+                      other value to stop and return it.
         timeout_ms:   Maximum wait in milliseconds. Default: 60 000 (1 min).
         interval_ms:  Delay between polls in milliseconds. Default: 2 000 (2 s).
 
-    Raises:
-        UVerifyTimeoutError: If *condition* does not return ``True`` within *timeout_ms*.
+    Returns:
+        The first non-``False`` value returned by *condition*.
 
-    Example::
+    Raises:
+        UVerifyTimeoutError: If *condition* keeps returning ``False`` until
+                             *timeout_ms* has elapsed.
+
+    Example — poll until a certificate is queryable::
 
         from uverify_sdk import UVerifyClient, wait_for, UVerifyTimeoutError
 
@@ -534,14 +563,22 @@ def wait_for(
         try:
             wait_for(lambda: len(client.verify(data_hash)) > 0, timeout_ms=300_000)
         except UVerifyTimeoutError as e:
-            print(e)  # advises the user to re-run
+            print(e)
+
+    Example — return the certificates once they appear::
+
+        certs = wait_for(
+            lambda: client.verify(data_hash) or False,
+            timeout_ms=300_000,
+        )
     """
     import time
     from .exceptions import UVerifyTimeoutError
 
     deadline = time.monotonic() + timeout_ms / 1000.0
     while time.monotonic() < deadline:
-        if condition():
-            return
+        result = condition()
+        if result is not False:
+            return result  # type: ignore[return-value]
         time.sleep(interval_ms / 1000.0)
     raise UVerifyTimeoutError(timeout_ms)

@@ -370,10 +370,15 @@ public class UVerifyClient {
      * @return List of certificates; empty list if none found.
      */
     public List<CertificateResponse> verify(String hash) {
-        List<CertificateResponse> result = get(
-                "/api/v1/verify/" + hash,
-                new TypeReference<List<CertificateResponse>>() {});
-        return result != null ? result : Collections.emptyList();
+        try {
+            List<CertificateResponse> result = get(
+                    "/api/v1/verify/" + hash,
+                    new TypeReference<List<CertificateResponse>>() {});
+            return result != null ? result : Collections.emptyList();
+        } catch (UVerifyException e) {
+            if (e.getStatusCode() == 404) return Collections.emptyList();
+            throw e;
+        }
     }
 
     /**
@@ -434,9 +439,29 @@ public class UVerifyClient {
                         address, stateId, certificates.toArray(new CertificateData[0]))
                 : BuildTransactionRequest.bootstrapRequest(
                         address, null, certificates.toArray(new CertificateData[0]));
-        BuildTransactionResponse response = buildTransactionInternal(request);
-        String witnessSet = cb.sign(response.getUnsignedTransaction());
-        submitTransactionInternal(response.getUnsignedTransaction(), witnessSet);
+        int maxAttempts = 3;
+        UVerifyException lastError = null;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                BuildTransactionResponse response = buildTransactionInternal(request);
+                String witnessSet = cb.sign(response.getUnsignedTransaction());
+                submitTransactionInternal(response.getUnsignedTransaction(), witnessSet);
+                return;
+            } catch (UVerifyException e) {
+                lastError = e;
+                if (attempt < maxAttempts) {
+                    System.out.printf("Certificate issuance failed (attempt %d/%d), retrying in 5 s (waiting for chain state to propagate) …%n",
+                            attempt, maxAttempts);
+                    try {
+                        Thread.sleep(5_000);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw e;
+                    }
+                }
+            }
+        }
+        throw lastError;
     }
 
     /**
@@ -585,33 +610,41 @@ public class UVerifyClient {
 
     /**
      * Polls {@code condition} every {@code intervalMs} milliseconds until it
-     * returns {@code true}, or throws once {@code timeoutMs} has elapsed.
+     * returns a non-{@code null} value, then returns that value. Throws
+     * {@link UVerifyTimeoutException} once {@code timeoutMs} has elapsed.
      *
-     * <p>Useful for waiting on eventual-consistency operations such as faucet
-     * funds settling on-chain or a submitted certificate becoming queryable.
+     * <p>Return {@code null} from the condition to keep polling; return any
+     * other value (including {@link Boolean#TRUE}) to stop and return it.
+     * Exceptions thrown by the condition propagate immediately without retrying.
      *
      * <pre>{@code
-     * client.fundWallet("addr_test1...", signMessage);
-     * UVerifyClient.waitFor(
-     *     () -> !client.verify("sha256-hash").isEmpty(),
-     *     120_000,  // 2-minute timeout
-     *     2_000     // poll every 2 s
+     * // Poll until certificates appear, return them
+     * List<CertificateResponse> certs = UVerifyClient.waitFor(
+     *     () -> {
+     *         var c = client.verify("sha256-hash");
+     *         return c.isEmpty() ? null : c;
+     *     },
+     *     300_000, 2_000
      * );
      * }</pre>
      *
-     * @param condition   Returns {@code true} when polling should stop.
+     * @param <T>         The type of value returned when polling succeeds.
+     * @param condition   Returns {@code null} to keep polling, or any non-null
+     *                    value to stop.
      * @param timeoutMs   Maximum wait in milliseconds.
      * @param intervalMs  Delay between polls in milliseconds.
+     * @return The first non-{@code null} value returned by {@code condition}.
      * @throws Exception               if {@code condition} throws.
      * @throws UVerifyTimeoutException if the timeout is reached.
      */
-    public static void waitFor(
-            Callable<Boolean> condition,
+    public static <T> T waitFor(
+            Callable<T> condition,
             long timeoutMs,
             long intervalMs) throws Exception {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline) {
-            if (Boolean.TRUE.equals(condition.call())) return;
+            T result = condition.call();
+            if (result != null) return result;
             Thread.sleep(intervalMs);
         }
         throw new UVerifyTimeoutException(timeoutMs);
@@ -623,7 +656,7 @@ public class UVerifyClient {
      * @throws Exception               if {@code condition} throws.
      * @throws UVerifyTimeoutException if the timeout is reached.
      */
-    public static void waitFor(Callable<Boolean> condition) throws Exception {
-        waitFor(condition, 60_000, 2_000);
+    public static <T> T waitFor(Callable<T> condition) throws Exception {
+        return waitFor(condition, 60_000, 2_000);
     }
 }

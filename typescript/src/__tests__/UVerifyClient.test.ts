@@ -577,4 +577,230 @@ describe('UVerifyClient', () => {
       expect(requestBody.stateId).toBe('state-1');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // apps
+  // -------------------------------------------------------------------------
+
+  describe('apps', () => {
+    const TX = 'tx_apps_001';
+
+    function buildAndSubmitFetchFor(txHash: string) {
+      return vi.fn()
+        .mockResolvedValueOnce({
+          ok: true, status: 200, statusText: 'OK',
+          text: () => Promise.resolve(JSON.stringify(BUILD_RESPONSE)),
+          json: () => Promise.resolve(BUILD_RESPONSE),
+        })
+        .mockResolvedValueOnce({
+          ok: true, status: 200, statusText: 'OK',
+          text: () => Promise.resolve(JSON.stringify({ transactionHash: txHash })),
+          json: () => Promise.resolve({ transactionHash: txHash }),
+        });
+    }
+
+    it('exposes a .apps object on the client', () => {
+      const client = new UVerifyClient();
+      expect(client.apps).toBeDefined();
+      expect(typeof client.apps.issueDiploma).toBe('function');
+      expect(typeof client.apps.issueDigitalProductPassport).toBe('function');
+      expect(typeof client.apps.issueLaboratoryReport).toBe('function');
+    });
+
+    describe('issueDiploma', () => {
+      it('returns txHash and one certificate entry per diploma', async () => {
+        vi.stubGlobal('fetch', buildAndSubmitFetchFor(TX));
+        const client = new UVerifyClient({ signTx: vi.fn().mockResolvedValue('w') });
+
+        const result = await client.apps.issueDiploma('addr1test', [
+          {
+            studentId: 'TUM-001',
+            name: 'Maria Müller',
+            degree: 'M.Sc. Computer Science',
+            institution: 'TU Munich',
+            graduationDate: '2024-06-28',
+            honors: 'Summa Cum Laude',
+          },
+        ]);
+
+        expect(result.txHash).toBe(TX);
+        expect(result.certificates).toHaveLength(1);
+        expect(result.certificates[0].studentId).toBe('TUM-001');
+        expect(result.certificates[0].name).toBe('Maria Müller');
+        expect(result.certificates[0].hash).toMatch(/^[0-9a-f]{64}$/);
+        expect(result.certificates[0].verifyUrl).toContain(TX);
+        expect(result.certificates[0].verifyUrl).toContain('name=Maria');
+      });
+
+      it('sends diploma metadata with correct template ID and update policy', async () => {
+        const fetch = buildAndSubmitFetchFor(TX);
+        vi.stubGlobal('fetch', fetch);
+        const client = new UVerifyClient({ signTx: vi.fn().mockResolvedValue('w') });
+
+        await client.apps.issueDiploma('addr1test', [
+          {
+            studentId: 'TUM-001',
+            name: 'Felix Schmidt',
+            degree: 'M.Sc. CS',
+            institution: 'TU Munich',
+            graduationDate: '2024-06-28',
+          },
+        ]);
+
+        const buildBody = JSON.parse((fetch.mock.calls[0][1] as RequestInit).body as string);
+        const meta = JSON.parse(buildBody.certificates[0].metadata);
+        expect(meta.uverify_template_id).toBe('diploma');
+        expect(meta.uverify_update_policy).toBe('first');
+        expect(meta.issuer).toBe('TU Munich');
+        expect(meta.title).toBe('M.Sc. CS');
+      });
+
+      it('issues a batch of diplomas in one transaction', async () => {
+        const fetch = buildAndSubmitFetchFor(TX);
+        vi.stubGlobal('fetch', fetch);
+        const client = new UVerifyClient({ signTx: vi.fn().mockResolvedValue('w') });
+
+        const result = await client.apps.issueDiploma('addr1test', [
+          { studentId: 'S1', name: 'A', degree: 'B.Sc.', institution: 'Uni', graduationDate: '2024-01-01' },
+          { studentId: 'S2', name: 'B', degree: 'M.Sc.', institution: 'Uni', graduationDate: '2024-01-01' },
+        ]);
+
+        const buildBody = JSON.parse((fetch.mock.calls[0][1] as RequestInit).body as string);
+        expect(buildBody.certificates).toHaveLength(2);
+        expect(result.certificates).toHaveLength(2);
+      });
+    });
+
+    describe('issueDigitalProductPassport', () => {
+      it('returns txHash, hash, and verifyUrl with serial param', async () => {
+        vi.stubGlobal('fetch', buildAndSubmitFetchFor(TX));
+        const client = new UVerifyClient({ signTx: vi.fn().mockResolvedValue('w') });
+
+        const result = await client.apps.issueDigitalProductPassport('addr1test', {
+          name: 'EcoCharge Pro',
+          manufacturer: 'GreenTech AG',
+          gtin: '04012345678901',
+          serialNumber: 'EC200-SN-001',
+        });
+
+        expect(result.txHash).toBe(TX);
+        expect(result.hash).toMatch(/^[0-9a-f]{64}$/);
+        expect(result.verifyUrl).toContain(TX);
+        expect(result.verifyUrl).toContain('serial=EC200-SN-001');
+      });
+
+      it('sends DPP metadata with mat_ and cert_ prefixes', async () => {
+        const fetch = buildAndSubmitFetchFor(TX);
+        vi.stubGlobal('fetch', fetch);
+        const client = new UVerifyClient({ signTx: vi.fn().mockResolvedValue('w') });
+
+        await client.apps.issueDigitalProductPassport('addr1test', {
+          name: 'EcoCharge Pro',
+          manufacturer: 'GreenTech AG',
+          gtin: '04012345678901',
+          serialNumber: 'EC200-SN-001',
+          materials: { aluminum: '45%', recycled_plastic: '38%' },
+          certifications: { ce: 'CE Marking', rohs: 'RoHS Compliant' },
+        });
+
+        const buildBody = JSON.parse((fetch.mock.calls[0][1] as RequestInit).body as string);
+        const meta = JSON.parse(buildBody.certificates[0].metadata);
+        expect(meta.uverify_template_id).toBe('digitalProductPassport');
+        expect(meta.uverify_update_policy).toBe('restricted');
+        expect(meta.mat_aluminum).toBe('45%');
+        expect(meta.mat_recycled_plastic).toBe('38%');
+        expect(meta.cert_ce).toBe('CE Marking');
+        expect(meta.cert_rohs).toBe('RoHS Compliant');
+        expect(meta.uv_url_serial).toMatch(/^[0-9a-f]{64}$/);
+      });
+    });
+
+    describe('issueLaboratoryReport', () => {
+      it('returns txHash and one certificate entry per report', async () => {
+        vi.stubGlobal('fetch', buildAndSubmitFetchFor(TX));
+        const client = new UVerifyClient({ signTx: vi.fn().mockResolvedValue('w') });
+
+        const result = await client.apps.issueLaboratoryReport('addr1test', [
+          {
+            reportId: 'BMD-2024-001',
+            patientName: 'Sophie Wagner',
+            labName: 'Berlin Medical Lab',
+            values: { glucose: '5.4 mmol/L', hba1c: '5.7%' },
+          },
+        ]);
+
+        expect(result.txHash).toBe(TX);
+        expect(result.certificates).toHaveLength(1);
+        expect(result.certificates[0].reportId).toBe('BMD-2024-001');
+        expect(result.certificates[0].patientName).toBe('Sophie Wagner');
+        expect(result.certificates[0].hash).toMatch(/^[0-9a-f]{64}$/);
+        expect(result.certificates[0].verifyUrl).toContain('name=Sophie');
+        expect(result.certificates[0].verifyUrl).toContain('report_id=BMD-2024-001');
+      });
+
+      it('sends lab report metadata with a_ prefixed values', async () => {
+        const fetch = buildAndSubmitFetchFor(TX);
+        vi.stubGlobal('fetch', fetch);
+        const client = new UVerifyClient({ signTx: vi.fn().mockResolvedValue('w') });
+
+        await client.apps.issueLaboratoryReport('addr1test', [
+          {
+            reportId: 'BMD-2024-001',
+            patientName: 'Sophie Wagner',
+            labName: 'Berlin Medical Lab',
+            auditable: true,
+            contact: 'lab@example.com',
+            values: { glucose: '5.4 mmol/L', hba1c: '5.7%' },
+          },
+        ]);
+
+        const buildBody = JSON.parse((fetch.mock.calls[0][1] as RequestInit).body as string);
+        const meta = JSON.parse(buildBody.certificates[0].metadata);
+        expect(meta.uverify_template_id).toBe('laboratoryReport');
+        expect(meta.uverify_update_policy).toBe('first');
+        expect(meta.issuer).toBe('Berlin Medical Lab');
+        expect(meta.auditable).toBe('true');
+        expect(meta.contact).toBe('lab@example.com');
+        expect(meta.a_glucose).toBe('5.4 mmol/L');
+        expect(meta.a_hba1c).toBe('5.7%');
+        expect(meta.uv_url_name).toMatch(/^[0-9a-f]{64}$/);
+        expect(meta.uv_url_report_id).toMatch(/^[0-9a-f]{64}$/);
+      });
+
+      it('issues a batch of reports in one transaction', async () => {
+        const fetch = buildAndSubmitFetchFor(TX);
+        vi.stubGlobal('fetch', fetch);
+        const client = new UVerifyClient({ signTx: vi.fn().mockResolvedValue('w') });
+
+        const result = await client.apps.issueLaboratoryReport('addr1test', [
+          { reportId: 'R1', patientName: 'Alice', labName: 'Lab', values: { glucose: '5.0 mmol/L' } },
+          { reportId: 'R2', patientName: 'Bob',   labName: 'Lab', values: { glucose: '6.0 mmol/L' } },
+        ]);
+
+        const buildBody = JSON.parse((fetch.mock.calls[0][1] as RequestInit).body as string);
+        expect(buildBody.certificates).toHaveLength(2);
+        expect(result.certificates).toHaveLength(2);
+      });
+    });
+
+    describe('verifyBaseUrl derivation', () => {
+      it('uses preprod verify URL when the API base URL contains preprod', () => {
+        const client = new UVerifyClient(); // defaults to preprod API
+        expect((client.apps as unknown as { verifyBaseUrl: string }).verifyBaseUrl)
+          .toBe('https://app.preprod.uverify.io/verify');
+      });
+
+      it('uses production verify URL for a non-preprod API base URL', () => {
+        const client = new UVerifyClient({ baseUrl: 'https://api.uverify.io' });
+        expect((client.apps as unknown as { verifyBaseUrl: string }).verifyBaseUrl)
+          .toBe('https://app.uverify.io/verify');
+      });
+
+      it('respects an explicit verifyBaseUrl option', () => {
+        const client = new UVerifyClient({ verifyBaseUrl: 'https://custom.example.com/verify' });
+        expect((client.apps as unknown as { verifyBaseUrl: string }).verifyBaseUrl)
+          .toBe('https://custom.example.com/verify');
+      });
+    });
+  });
 });
