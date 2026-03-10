@@ -13,14 +13,7 @@
     "java": {
       "release-type": "simple",
       "component": "java",
-      "package-name": "uverify-sdk",
-      "extra-files": [
-        {
-          "type": "xml",
-          "path": "pom.xml",
-          "xpath": "//project/version"
-        }
-      ]
+      "package-name": "uverify-sdk"
     },
     "python": {
       "release-type": "python",
