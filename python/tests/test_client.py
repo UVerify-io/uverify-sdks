@@ -142,7 +142,7 @@ def test_core_build_transaction():
 def test_core_submit_transaction():
     responses_lib.add(
         responses_lib.POST, f"{BASE_URL}/api/v1/transaction/submit",
-        status=200)
+        json={"transactionHash": "mock-tx-hash"}, status=200)
     UVerifyClient().core.submit_transaction("signed-tx", "witness")
 
 
@@ -191,7 +191,7 @@ def test_issue_certificates_bootstrap_flow():
         status=200)
     responses_lib.add(
         responses_lib.POST, f"{BASE_URL}/api/v1/transaction/submit",
-        status=200)
+        json={"transactionHash": "mock-tx-hash"}, status=200)
 
     UVerifyClient().issue_certificates(
         address="addr1...",
@@ -210,7 +210,7 @@ def test_issue_certificates_with_state_id():
         status=200)
     responses_lib.add(
         responses_lib.POST, f"{BASE_URL}/api/v1/transaction/submit",
-        status=200)
+        json={"transactionHash": "mock-tx-hash"}, status=200)
 
     UVerifyClient().issue_certificates(
         address="addr1...",
@@ -232,7 +232,7 @@ def test_issue_certificates_uses_constructor_level_callback():
         status=200)
     responses_lib.add(
         responses_lib.POST, f"{BASE_URL}/api/v1/transaction/submit",
-        status=200)
+        json={"transactionHash": "mock-tx-hash"}, status=200)
 
     client = UVerifyClient(sign_tx=sign_tx_stub)
     client.issue_certificates(

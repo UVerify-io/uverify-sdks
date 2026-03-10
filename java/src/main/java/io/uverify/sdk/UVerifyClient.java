@@ -406,15 +406,10 @@ public class UVerifyClient {
      * @return List of certificates; empty list if none found.
      */
     public List<CertificateResponse> verify(String hash) {
-        try {
-            List<CertificateResponse> result = get(
-                    "/api/v1/verify/" + hash,
-                    new TypeReference<List<CertificateResponse>>() {});
-            return result != null ? result : Collections.emptyList();
-        } catch (UVerifyException e) {
-            if (e.getStatusCode() == 404) return Collections.emptyList();
-            throw e;
-        }
+        List<CertificateResponse> result = get(
+                "/api/v1/verify/" + hash,
+                new TypeReference<List<CertificateResponse>>() {});
+        return result != null ? result : Collections.emptyList();
     }
 
     /**

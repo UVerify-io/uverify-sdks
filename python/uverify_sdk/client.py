@@ -323,12 +323,7 @@ class UVerifyClient:
             for cert in certs:
                 print(cert.transaction_hash, cert.creation_time)
         """
-        try:
-            data = self._get(f"/api/v1/verify/{hash}")
-        except UVerifyApiError as e:
-            if e.status_code == 404:
-                return []
-            raise
+        data = self._get(f"/api/v1/verify/{hash}")
         return [CertificateResponse.from_dict(item) for item in (data or [])]
 
     def verify_by_transaction(
