@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/UVerify-io/uverify-sdks/compare/typescript-v0.1.4...typescript-v0.1.5) (2026-03-14)
+
+
+### Features
+
+* add COI to high level app api ([3b13bc4](https://github.com/UVerify-io/uverify-sdks/commit/3b13bc45ed5c3a1bfa3ec749ccb9edba8204fb61))
+
 ## [0.1.4](https://github.com/UVerify-io/uverify-sdks/compare/typescript-v0.1.3...typescript-v0.1.4) (2026-03-10)
 
 
