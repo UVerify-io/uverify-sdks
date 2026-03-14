@@ -135,3 +135,49 @@ export interface LaboratoryReportResult {
     verifyUrl: string;
   }>;
 }
+
+/**
+ * Input for a Certificate of Insurance.
+ */
+export interface CertificateOfInsuranceInput {
+  /** Unique policy reference number — used as the on-chain fingerprint. */
+  policyNumber: string;
+  /** Name of the issuing insurance company. */
+  insurer: string;
+  /** Name of the insurance broker or agent (optional). */
+  producer?: string;
+  /** Name of the insured business or individual. */
+  insured: string;
+  /** Address of the insured (optional). */
+  insuredAddress?: string;
+  /** Policy start date in ISO format (e.g. `'2025-01-01'`). */
+  effectiveDate: string;
+  /** Policy end date in ISO format (e.g. `'2026-01-01'`) — drives the VALID/EXPIRED badge on the certificate. */
+  expirationDate: string;
+  /** Name of the party requiring proof of insurance (optional). */
+  certificateHolder?: string;
+  /** Address of the certificate holder (optional). */
+  certificateHolderAddress?: string;
+  /** Whether the certificate holder is named as an additional insured (optional). */
+  additionalInsured?: boolean;
+  /** Whether a waiver of subrogation applies in favour of the certificate holder (optional). */
+  waiverOfSubrogation?: boolean;
+  /**
+   * Coverage limits keyed by coverage type.
+   * Keys are plain names — the `cov_` prefix is added automatically.
+   * @example `{ general_liability: '1,000,000', workers_compensation: '500,000' }`
+   */
+  coverages: Record<string, string>;
+}
+
+/**
+ * Result returned by {@link UVerifyApps.issueCertificateOfInsurance}.
+ */
+export interface CertificateOfInsuranceResult {
+  /** Cardano transaction hash of the issuance transaction. */
+  txHash: string;
+  /** SHA-256 hash of `policyNumber` — the on-chain certificate fingerprint. */
+  hash: string;
+  /** Verification URL for this certificate. */
+  verifyUrl: string;
+}

@@ -7,6 +7,8 @@ export type {
   DigitalProductPassportResult,
   LaboratoryReportInput,
   LaboratoryReportResult,
+  CertificateOfInsuranceInput,
+  CertificateOfInsuranceResult,
 } from './apps/index.js';
 export type {
   UVerifyClientOptions,

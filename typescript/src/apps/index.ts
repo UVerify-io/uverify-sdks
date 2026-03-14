@@ -7,6 +7,8 @@ import type {
   DigitalProductPassportResult,
   LaboratoryReportInput,
   LaboratoryReportResult,
+  CertificateOfInsuranceInput,
+  CertificateOfInsuranceResult,
 } from './types.js';
 
 async function sha256hex(input: string): Promise<string> {
@@ -227,6 +229,75 @@ export class UVerifyApps {
       }),
     };
   }
+
+  /**
+   * Issue a Certificate of Insurance (COI) on-chain.
+   *
+   * The hash is computed as `sha256(policyNumber)`, uniquely identifying this
+   * policy.
+   *
+   * GDPR-sensitive party fields (`insured`, `insuredAddress`, `certificateHolder`,
+   * `certificateHolderAddress`) are stored as SHA-256 hashes on-chain and
+   * revealed as plaintext via URL parameters in the returned `verifyUrl`.
+   * Policy terms, dates, and coverage limits are stored in plaintext.
+   *
+   * `coverages` keys receive a `cov_` prefix automatically
+   * (e.g. `general_liability` → `cov_general_liability`).
+   *
+   * The update policy is set to `restricted` — only the issuing insurance
+   * company wallet may push subsequent updates (e.g. cancellations or renewals).
+   */
+  async issueCertificateOfInsurance(
+    address: string,
+    coi: CertificateOfInsuranceInput,
+    signCallback?: TransactionSignCallback,
+  ): Promise<CertificateOfInsuranceResult> {
+    const [hash, insuredHash, insuredAddressHash, holderHash, holderAddressHash] = await Promise.all([
+      sha256hex(coi.policyNumber),
+      sha256hex(coi.insured),
+      coi.insuredAddress !== undefined ? sha256hex(coi.insuredAddress) : Promise.resolve(undefined),
+      coi.certificateHolder !== undefined ? sha256hex(coi.certificateHolder) : Promise.resolve(undefined),
+      coi.certificateHolderAddress !== undefined ? sha256hex(coi.certificateHolderAddress) : Promise.resolve(undefined),
+    ]);
+
+    const metadata: Record<string, string> = {
+      uverify_template_id: 'certificateOfInsurance',
+      uverify_update_policy: 'restricted',
+      issuer: coi.insurer,
+      // GDPR-sensitive fields — stored as hashes on-chain, revealed via URL params
+      uv_url_insured: insuredHash,
+      policy_number: coi.policyNumber,
+      effective_date: coi.effectiveDate,
+      expiration_date: coi.expirationDate,
+      ...(coi.producer !== undefined ? { producer: coi.producer } : {}),
+      ...(insuredAddressHash !== undefined ? { uv_url_insured_address: insuredAddressHash } : {}),
+      ...(holderHash !== undefined ? { uv_url_certificate_holder: holderHash } : {}),
+      ...(holderAddressHash !== undefined ? { uv_url_certificate_holder_address: holderAddressHash } : {}),
+      ...(coi.additionalInsured !== undefined ? { additional_insured: String(coi.additionalInsured) } : {}),
+      ...(coi.waiverOfSubrogation !== undefined ? { waiver_of_subrogation: String(coi.waiverOfSubrogation) } : {}),
+    };
+
+    for (const [key, value] of Object.entries(coi.coverages)) {
+      metadata[`cov_${key}`] = value;
+    }
+
+    const txHash = await this.issue(
+      address,
+      [{ hash, algorithm: 'SHA-256', metadata }],
+      signCallback,
+    );
+
+    const params = new URLSearchParams({ insured: coi.insured });
+    if (coi.insuredAddress !== undefined) params.set('insured_address', coi.insuredAddress);
+    if (coi.certificateHolder !== undefined) params.set('certificate_holder', coi.certificateHolder);
+    if (coi.certificateHolderAddress !== undefined) params.set('certificate_holder_address', coi.certificateHolderAddress);
+
+    return {
+      txHash,
+      hash,
+      verifyUrl: `${this.verifyBaseUrl}/${hash}/${txHash}?${params}`,
+    };
+  }
 }
 
 export type {
@@ -236,4 +307,6 @@ export type {
   DigitalProductPassportResult,
   LaboratoryReportInput,
   LaboratoryReportResult,
+  CertificateOfInsuranceInput,
+  CertificateOfInsuranceResult,
 } from './types.js';
