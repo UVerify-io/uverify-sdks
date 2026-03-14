@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4](https://github.com/UVerify-io/uverify-sdks/compare/typescript-v0.1.3...typescript-v0.1.4) (2026-03-10)
+
+
+### Features
+
+* add a high level app api to publish lab reports or digital product passports directly ([c625618](https://github.com/UVerify-io/uverify-sdks/commit/c6256186ddb58ab083d8de19d36341bdf8f8bcdc))
+
 ## [0.1.3](https://github.com/UVerify-io/uverify-sdks/compare/typescript-v0.1.2...typescript-v0.1.3) (2026-03-05)
 
 
