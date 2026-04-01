@@ -177,7 +177,14 @@ class UVerifyClient:
             if "preprod" in self._base_url
             else "https://app.uverify.io/verify"
         )
-        self.apps = UVerifyApps(self.issue_certificates, _verify_base_url)
+        self.apps = UVerifyApps(
+            self.issue_certificates,
+            _verify_base_url,
+            base_url=self._base_url,
+            session=self._session,
+            sign_tx=self._default_sign_tx,
+            submit_fn=self._submit_transaction,
+        )
 
     # -------------------------------------------------------------------------
     # Internal HTTP helpers

@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Callable, List, Optional
+import json
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlencode
+
+import requests as _requests
 
 from ..models.certificate import CertificateData
 from .types import (
@@ -15,6 +18,10 @@ from .types import (
     LaboratoryReportCertificateResult,
     LaboratoryReportInput,
     LaboratoryReportResult,
+    TokenizableCertificateClaimInput,
+    TokenizableCertificateInput,
+    TokenizableCertificateResult,
+    TokenizableCertificateStatus,
 )
 
 # Type alias for the bound issue_certificates method passed in from UVerifyClient.
@@ -47,9 +54,51 @@ class UVerifyApps:
         ])
     """
 
-    def __init__(self, issue_fn: _IssueFn, verify_base_url: str) -> None:
+    def __init__(
+        self,
+        issue_fn: _IssueFn,
+        verify_base_url: str,
+        base_url: Optional[str] = None,
+        session: Optional[_requests.Session] = None,
+        sign_tx: Optional[Callable[[str], str]] = None,
+        submit_fn: Optional[Callable[[str, Optional[str]], str]] = None,
+    ) -> None:
         self._issue = issue_fn
         self._verify_base_url = verify_base_url
+        self._base_url = base_url
+        self._session = session
+        self._default_sign_tx = sign_tx
+        self._submit_fn = submit_fn
+
+    def _require_extension_support(self, method_name: str):
+        if not self._base_url or not self._default_sign_tx or not self._submit_fn or not self._session:
+            raise RuntimeError(
+                f"{method_name} requires the UVerify client to be configured with "
+                f"a base_url, sign_tx callback, and submit_fn. "
+                f"Ensure you are using UVerifyClient to access client.apps."
+            )
+
+    def _extension_post(self, path: str, body: Dict[str, Any]) -> Any:
+        url = f"{self._base_url}{path}"
+        response = self._session.post(url, json=body)
+        if not response.ok:
+            raise RuntimeError(
+                f"UVerify extension error {response.status_code}: {response.text}"
+            )
+        if not response.text:
+            return None
+        return response.json()
+
+    def _extension_get(self, path: str) -> Any:
+        url = f"{self._base_url}{path}"
+        response = self._session.get(url)
+        if not response.ok:
+            raise RuntimeError(
+                f"UVerify extension error {response.status_code}: {response.text}"
+            )
+        if not response.text:
+            return None
+        return response.json()
 
     def issue_diploma(
         self,
@@ -259,6 +308,120 @@ class UVerifyApps:
         return LaboratoryReportResult(tx_hash=tx_hash, certificates=certificates)
 
 
+    def issue_tokenizable_certificate(
+        self,
+        address: str,
+        input: TokenizableCertificateInput,
+        sign_tx: Optional[Callable[[str], str]] = None,
+    ) -> TokenizableCertificateResult:
+        """
+        Issue a tokenizable certificate — inserts a node into the on-chain sorted
+        linked list and mints a CIP-68 NFT pair for the recipient.
+
+        Requires the ``tokenizable-certificate`` backend extension to be enabled.
+
+        Args:
+            address:  Cardano address of the inserter / fee payer.
+            input:    Certificate parameters (key, owner, asset name, init UTxO).
+            sign_tx:  Wallet callback; falls back to constructor-level default.
+
+        Returns:
+            :class:`TokenizableCertificateResult` with the transaction hash, key,
+            and verification URL.
+        """
+        self._require_extension_support("issue_tokenizable_certificate")
+        sign = sign_tx or self._default_sign_tx
+
+        body = {
+            "inserterAddress": address,
+            "key": input.key,
+            "ownerPubKeyHash": input.owner_pub_key_hash,
+            "assetName": input.asset_name_hex,
+            "initUtxoTxHash": input.init_utxo_tx_hash,
+            "initUtxoOutputIndex": input.init_utxo_output_index,
+        }
+        if input.bootstrap_token_name is not None:
+            body["bootstrapTokenName"] = input.bootstrap_token_name
+
+        unsigned_tx = self._extension_post(
+            "/api/v1/extension/tokenizable-certificate/insert", body
+        )
+        witness_set = sign(unsigned_tx)
+        tx_hash = self._submit_fn(unsigned_tx, witness_set)
+
+        return TokenizableCertificateResult(
+            tx_hash=tx_hash,
+            key=input.key,
+            verify_url=f"{self._verify_base_url}/{input.key}/{tx_hash}",
+        )
+
+    def get_tokenizable_certificate_status(
+        self,
+        key: str,
+        init_utxo_tx_hash: str,
+        init_utxo_output_index: int,
+    ) -> TokenizableCertificateStatus:
+        """
+        Query the on-chain status of a tokenizable certificate node.
+
+        Requires the ``tokenizable-certificate`` backend extension to be enabled.
+
+        Args:
+            key:                    On-chain certificate key (SHA-256 hash).
+            init_utxo_tx_hash:      Transaction hash of the Init UTxO.
+            init_utxo_output_index: Output index of the Init UTxO.
+
+        Returns:
+            :class:`TokenizableCertificateStatus` indicating whether the certificate
+            has been claimed and who currently holds the token.
+        """
+        self._require_extension_support("get_tokenizable_certificate_status")
+        path = (
+            f"/api/v1/extension/tokenizable-certificate/status/{key}"
+            f"?initUtxoTxHash={init_utxo_tx_hash}&initUtxoOutputIndex={init_utxo_output_index}"
+        )
+        data = self._extension_get(path)
+        return TokenizableCertificateStatus(
+            key=data["key"],
+            claimed=data["claimed"],
+            owner=data.get("owner"),
+        )
+
+    def redeem_tokenizable_certificate(
+        self,
+        input: TokenizableCertificateClaimInput,
+        sign_tx: Optional[Callable[[str], str]] = None,
+    ) -> str:
+        """
+        Redeem (claim) a tokenizable certificate — the holder of the CIP-68 user NFT
+        burns the token and removes the node from the on-chain linked list.
+
+        Requires the ``tokenizable-certificate`` backend extension to be enabled.
+
+        Args:
+            input:    Claim parameters (key, claimer address, init UTxO, asset name).
+            sign_tx:  Wallet callback; falls back to constructor-level default.
+
+        Returns:
+            The Cardano transaction hash of the claim transaction.
+        """
+        self._require_extension_support("redeem_tokenizable_certificate")
+        sign = sign_tx or self._default_sign_tx
+
+        unsigned_tx = self._extension_post(
+            "/api/v1/extension/tokenizable-certificate/claim",
+            {
+                "claimerAddress": input.claimer_address,
+                "key": input.key,
+                "initUtxoTxHash": input.init_utxo_tx_hash,
+                "initUtxoOutputIndex": input.init_utxo_output_index,
+                "assetName": input.asset_name_hex,
+            },
+        )
+        witness_set = sign(unsigned_tx)
+        return self._submit_fn(unsigned_tx, witness_set)
+
+
 __all__ = [
     "UVerifyApps",
     "DiplomaInput",
@@ -269,4 +432,8 @@ __all__ = [
     "LaboratoryReportInput",
     "LaboratoryReportResult",
     "LaboratoryReportCertificateResult",
+    "TokenizableCertificateInput",
+    "TokenizableCertificateResult",
+    "TokenizableCertificateStatus",
+    "TokenizableCertificateClaimInput",
 ]

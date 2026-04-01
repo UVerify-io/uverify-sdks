@@ -235,7 +235,12 @@ export class UVerifyClient {
       (this.baseUrl.includes('preprod')
         ? 'https://app.preprod.uverify.io/verify'
         : 'https://app.uverify.io/verify');
-    this.apps = new UVerifyApps(this.issueCertificates, verifyBaseUrl);
+    this.apps = new UVerifyApps(this.issueCertificates, verifyBaseUrl, {
+      baseUrl: this.baseUrl,
+      defaultHeaders: this.defaultHeaders,
+      signTx: this.defaultSignTx,
+      submitFn: this._submitTransaction.bind(this),
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -266,8 +271,13 @@ export class UVerifyClient {
       } catch {
         responseBody = rawBody;
       }
+      const bodyMessage =
+        (typeof responseBody === 'object' && responseBody !== null
+          ? (responseBody as Record<string, unknown>).message ??
+            (responseBody as Record<string, unknown>).error
+          : typeof responseBody === 'string' ? responseBody : undefined) as string | undefined;
       throw new UVerifyApiError(
-        `UVerify API error ${response.status}: ${response.statusText}`,
+        bodyMessage ?? `UVerify API error ${response.status}: ${response.statusText}`,
         response.status,
         responseBody
       );

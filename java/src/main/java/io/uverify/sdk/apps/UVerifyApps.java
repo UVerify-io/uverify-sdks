@@ -1,7 +1,10 @@
 package io.uverify.sdk.apps;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.io.IOException;
 import io.uverify.sdk.callback.TransactionSignCallback;
 import io.uverify.sdk.exception.UVerifyException;
 import io.uverify.sdk.model.CertificateData;
@@ -289,16 +292,196 @@ public class UVerifyApps {
     }
 
     // -------------------------------------------------------------------------
+    // Tokenizable certificate types
+    // -------------------------------------------------------------------------
+
+    /** Input for issuing a tokenizable certificate (NFT-backed on-chain linked list node). */
+    public static class TokenizableCertificateInput {
+        private final String key;
+        private final String ownerPubKeyHash;
+        private final String assetNameHex;
+        private final String initUtxoTxHash;
+        private final int initUtxoOutputIndex;
+        private String bootstrapTokenName;
+
+        /**
+         * @param key                  SHA-256 hash of the content — used as the on-chain key.
+         * @param ownerPubKeyHash      Public key hash of the token owner (CIP-68 user NFT recipient).
+         * @param assetNameHex         Hex-encoded asset name for the minted CIP-68 user token.
+         * @param initUtxoTxHash       Transaction hash of the Init UTxO.
+         * @param initUtxoOutputIndex  Output index of the Init UTxO.
+         */
+        public TokenizableCertificateInput(String key, String ownerPubKeyHash, String assetNameHex,
+                                           String initUtxoTxHash, int initUtxoOutputIndex) {
+            this.key = key;
+            this.ownerPubKeyHash = ownerPubKeyHash;
+            this.assetNameHex = assetNameHex;
+            this.initUtxoTxHash = initUtxoTxHash;
+            this.initUtxoOutputIndex = initUtxoOutputIndex;
+        }
+
+        public String getKey()                  { return key; }
+        public String getOwnerPubKeyHash()      { return ownerPubKeyHash; }
+        public String getAssetNameHex()         { return assetNameHex; }
+        public String getInitUtxoTxHash()       { return initUtxoTxHash; }
+        public int getInitUtxoOutputIndex()     { return initUtxoOutputIndex; }
+        public String getBootstrapTokenName()   { return bootstrapTokenName; }
+
+        public TokenizableCertificateInput bootstrapTokenName(String v) {
+            this.bootstrapTokenName = v;
+            return this;
+        }
+    }
+
+    /** Result returned by {@link #issueTokenizableCertificate}. */
+    public static class TokenizableCertificateResult {
+        private final String txHash;
+        private final String key;
+        private final String verifyUrl;
+
+        TokenizableCertificateResult(String txHash, String key, String verifyUrl) {
+            this.txHash = txHash;
+            this.key = key;
+            this.verifyUrl = verifyUrl;
+        }
+
+        /** Cardano transaction hash of the issuance transaction. */
+        public String getTxHash()    { return txHash; }
+        /** The on-chain key (SHA-256 hash of the certified content). */
+        public String getKey()       { return key; }
+        /** Verification URL for this certificate. */
+        public String getVerifyUrl() { return verifyUrl; }
+    }
+
+    /** On-chain status of a tokenizable certificate node. */
+    public static class TokenizableCertificateStatus {
+        private final String key;
+        private final boolean claimed;
+        private final String owner;
+
+        TokenizableCertificateStatus(String key, boolean claimed, String owner) {
+            this.key = key;
+            this.claimed = claimed;
+            this.owner = owner;
+        }
+
+        /** The on-chain certificate key. */
+        public String getKey()     { return key; }
+        /** Whether the certificate has been claimed. */
+        public boolean isClaimed() { return claimed; }
+        /** Address of the current token holder, or {@code null} if not claimed. */
+        public String getOwner()   { return owner; }
+    }
+
+    /** Input for claiming (redeeming) a tokenizable certificate. */
+    public static class TokenizableCertificateClaimInput {
+        private final String key;
+        private final String claimerAddress;
+        private final String initUtxoTxHash;
+        private final int initUtxoOutputIndex;
+        private final String assetNameHex;
+
+        /**
+         * @param key                  On-chain certificate key to claim.
+         * @param claimerAddress       Cardano address of the claimer (must hold the CIP-68 user token).
+         * @param initUtxoTxHash       Transaction hash of the Init UTxO.
+         * @param initUtxoOutputIndex  Output index of the Init UTxO.
+         * @param assetNameHex         Hex-encoded asset name of the user token to redeem.
+         */
+        public TokenizableCertificateClaimInput(String key, String claimerAddress,
+                                                String initUtxoTxHash, int initUtxoOutputIndex,
+                                                String assetNameHex) {
+            this.key = key;
+            this.claimerAddress = claimerAddress;
+            this.initUtxoTxHash = initUtxoTxHash;
+            this.initUtxoOutputIndex = initUtxoOutputIndex;
+            this.assetNameHex = assetNameHex;
+        }
+
+        public String getKey()               { return key; }
+        public String getClaimerAddress()    { return claimerAddress; }
+        public String getInitUtxoTxHash()    { return initUtxoTxHash; }
+        public int getInitUtxoOutputIndex()  { return initUtxoOutputIndex; }
+        public String getAssetNameHex()      { return assetNameHex; }
+    }
+
+    // -------------------------------------------------------------------------
+    // Extension support (for tokenizable certificate and future extensions)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Provides HTTP access and signing callbacks required by extension methods.
+     * Constructed internally by {@link io.uverify.sdk.UVerifyClient}.
+     */
+    public static class ExtensionSupport {
+        @FunctionalInterface
+        public interface RawPostFn {
+            /** POST {@code body} to {@code path} and return the raw response body string. */
+            String post(String path, Map<String, Object> body);
+        }
+
+        @FunctionalInterface
+        public interface RawGetFn {
+            /** GET {@code path} and return the raw response body string. */
+            String get(String path);
+        }
+
+        @FunctionalInterface
+        public interface SubmitFn {
+            /** Submit a signed transaction and return the transaction hash. */
+            String submit(String unsignedTx, String witnessSet);
+        }
+
+        final RawPostFn rawPost;
+        final RawGetFn rawGet;
+        final SubmitFn submitFn;
+        final TransactionSignCallback defaultSignTx;
+
+        public ExtensionSupport(RawPostFn rawPost, RawGetFn rawGet,
+                                SubmitFn submitFn, TransactionSignCallback defaultSignTx) {
+            this.rawPost = rawPost;
+            this.rawGet = rawGet;
+            this.submitFn = submitFn;
+            this.defaultSignTx = defaultSignTx;
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Implementation
     // -------------------------------------------------------------------------
 
     private final IssueFn issueFn;
     private final String verifyBaseUrl;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ExtensionSupport extensionSupport;
 
     public UVerifyApps(IssueFn issueFn, String verifyBaseUrl) {
         this.issueFn = issueFn;
         this.verifyBaseUrl = verifyBaseUrl;
+        this.extensionSupport = null;
+    }
+
+    public UVerifyApps(IssueFn issueFn, String verifyBaseUrl, ExtensionSupport extensionSupport) {
+        this.issueFn = issueFn;
+        this.verifyBaseUrl = verifyBaseUrl;
+        this.extensionSupport = extensionSupport;
+    }
+
+    private ExtensionSupport requireExtensionSupport(String methodName) {
+        if (extensionSupport == null) {
+            throw new UVerifyException(methodName + " requires extension support. " +
+                    "Ensure you are using UVerifyClient to access client.apps.");
+        }
+        return extensionSupport;
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> T parseJson(String json, Class<T> type) {
+        try {
+            return objectMapper.readValue(json, type);
+        } catch (IOException e) {
+            throw new UVerifyException("Failed to parse extension response", e);
+        }
     }
 
     /**
@@ -490,6 +673,121 @@ public class UVerifyApps {
     public LaboratoryReportResult issueLaboratoryReport(
             String address, List<LaboratoryReportInput> reports) {
         return issueLaboratoryReport(address, reports, null);
+    }
+
+    /**
+     * Issue a tokenizable certificate — inserts a node into the on-chain sorted
+     * linked list and mints a CIP-68 NFT pair for the recipient.
+     *
+     * <p>Requires the {@code tokenizable-certificate} backend extension to be enabled
+     * and the client to be constructed with {@link ExtensionSupport}.
+     *
+     * @param address Cardano address of the inserter / fee payer.
+     * @param input   Certificate parameters (key, owner, asset name, init UTxO).
+     * @param signTx  Wallet callback; {@code null} uses the default from {@link ExtensionSupport}.
+     * @return {@link TokenizableCertificateResult} with the transaction hash, key, and verify URL.
+     */
+    public TokenizableCertificateResult issueTokenizableCertificate(
+            String address, TokenizableCertificateInput input, TransactionSignCallback signTx) {
+        ExtensionSupport ext = requireExtensionSupport("issueTokenizableCertificate");
+        TransactionSignCallback sign = signTx != null ? signTx : ext.defaultSignTx;
+        if (sign == null) {
+            throw new UVerifyException(
+                    "A TransactionSignCallback is required for issueTokenizableCertificate.");
+        }
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("inserterAddress", address);
+        body.put("key", input.getKey());
+        body.put("ownerPubKeyHash", input.getOwnerPubKeyHash());
+        body.put("assetName", input.getAssetNameHex());
+        body.put("initUtxoTxHash", input.getInitUtxoTxHash());
+        body.put("initUtxoOutputIndex", input.getInitUtxoOutputIndex());
+        if (input.getBootstrapTokenName() != null) {
+            body.put("bootstrapTokenName", input.getBootstrapTokenName());
+        }
+
+        String unsignedTx = parseJson(
+                ext.rawPost.post("/api/v1/extension/tokenizable-certificate/insert", body),
+                String.class);
+        String witnessSet = sign.sign(unsignedTx);
+        String txHash = ext.submitFn.submit(unsignedTx, witnessSet);
+
+        return new TokenizableCertificateResult(
+                txHash, input.getKey(), verifyBaseUrl + "/" + input.getKey() + "/" + txHash);
+    }
+
+    /** Issue a tokenizable certificate using the constructor-level sign callback. */
+    public TokenizableCertificateResult issueTokenizableCertificate(
+            String address, TokenizableCertificateInput input) {
+        return issueTokenizableCertificate(address, input, null);
+    }
+
+    /**
+     * Query the on-chain status of a tokenizable certificate node.
+     *
+     * <p>Requires the {@code tokenizable-certificate} backend extension to be enabled.
+     *
+     * @param key                  On-chain certificate key (SHA-256 hash).
+     * @param initUtxoTxHash       Transaction hash of the Init UTxO.
+     * @param initUtxoOutputIndex  Output index of the Init UTxO.
+     * @return {@link TokenizableCertificateStatus} with claimed flag and optional owner.
+     */
+    public TokenizableCertificateStatus getTokenizableCertificateStatus(
+            String key, String initUtxoTxHash, int initUtxoOutputIndex) {
+        ExtensionSupport ext = requireExtensionSupport("getTokenizableCertificateStatus");
+        String path = "/api/v1/extension/tokenizable-certificate/status/" + key
+                + "?initUtxoTxHash=" + urlEncode(initUtxoTxHash)
+                + "&initUtxoOutputIndex=" + initUtxoOutputIndex;
+        String responseBody = ext.rawGet.get(path);
+        try {
+            Map<String, Object> data = objectMapper.readValue(
+                    responseBody, new TypeReference<Map<String, Object>>() {});
+            return new TokenizableCertificateStatus(
+                    (String) data.get("key"),
+                    Boolean.TRUE.equals(data.get("claimed")),
+                    (String) data.get("owner"));
+        } catch (IOException e) {
+            throw new UVerifyException("Failed to parse status response", e);
+        }
+    }
+
+    /**
+     * Redeem (claim) a tokenizable certificate — the holder of the CIP-68 user NFT
+     * burns the token and removes the node from the on-chain linked list.
+     *
+     * <p>Requires the {@code tokenizable-certificate} backend extension to be enabled.
+     *
+     * @param input  Claim parameters (key, claimer address, init UTxO, asset name).
+     * @param signTx Wallet callback; {@code null} uses the default from {@link ExtensionSupport}.
+     * @return The Cardano transaction hash of the claim transaction.
+     */
+    public String redeemTokenizableCertificate(
+            TokenizableCertificateClaimInput input, TransactionSignCallback signTx) {
+        ExtensionSupport ext = requireExtensionSupport("redeemTokenizableCertificate");
+        TransactionSignCallback sign = signTx != null ? signTx : ext.defaultSignTx;
+        if (sign == null) {
+            throw new UVerifyException(
+                    "A TransactionSignCallback is required for redeemTokenizableCertificate.");
+        }
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("claimerAddress", input.getClaimerAddress());
+        body.put("key", input.getKey());
+        body.put("initUtxoTxHash", input.getInitUtxoTxHash());
+        body.put("initUtxoOutputIndex", input.getInitUtxoOutputIndex());
+        body.put("assetName", input.getAssetNameHex());
+
+        String unsignedTx = parseJson(
+                ext.rawPost.post("/api/v1/extension/tokenizable-certificate/claim", body),
+                String.class);
+        String witnessSet = sign.sign(unsignedTx);
+        return ext.submitFn.submit(unsignedTx, witnessSet);
+    }
+
+    /** Redeem a tokenizable certificate using the constructor-level sign callback. */
+    public String redeemTokenizableCertificate(TokenizableCertificateClaimInput input) {
+        return redeemTokenizableCertificate(input, null);
     }
 
     // -------------------------------------------------------------------------

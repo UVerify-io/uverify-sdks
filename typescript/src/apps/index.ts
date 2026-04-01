@@ -9,6 +9,10 @@ import type {
   LaboratoryReportResult,
   CertificateOfInsuranceInput,
   CertificateOfInsuranceResult,
+  TokenizableCertificateInput,
+  TokenizableCertificateResult,
+  TokenizableCertificateStatus,
+  TokenizableCertificateClaimInput,
 } from './types.js';
 
 async function sha256hex(input: string): Promise<string> {
@@ -45,13 +49,72 @@ type IssueFn = (
  * ]);
  * ```
  */
+interface AppsExtensionOptions {
+  baseUrl?: string;
+  defaultHeaders?: Record<string, string>;
+  signTx?: TransactionSignCallback;
+  submitFn?: (tx: string, witnessSet?: string) => Promise<string>;
+}
+
 export class UVerifyApps {
   private readonly issue: IssueFn;
   private readonly verifyBaseUrl: string;
+  private readonly extensionOptions: AppsExtensionOptions;
 
-  constructor(issueFn: IssueFn, verifyBaseUrl: string) {
+  constructor(issueFn: IssueFn, verifyBaseUrl: string, extensionOptions?: AppsExtensionOptions) {
     this.issue = issueFn;
     this.verifyBaseUrl = verifyBaseUrl;
+    this.extensionOptions = extensionOptions ?? {};
+  }
+
+  private requireExtensionSupport(methodName: string): Required<AppsExtensionOptions> {
+    const { baseUrl, defaultHeaders, signTx, submitFn } = this.extensionOptions;
+    if (!baseUrl || !signTx || !submitFn) {
+      throw new Error(
+        `${methodName} requires the UVerify client to be configured with ` +
+        `a baseUrl, signTx callback, and submitFn. ` +
+        `Ensure you are using UVerifyClient to access client.apps.`,
+      );
+    }
+    return { baseUrl, defaultHeaders: defaultHeaders ?? {}, signTx, submitFn };
+  }
+
+  private async extensionPost<T>(
+    baseUrl: string,
+    headers: Record<string, string>,
+    path: string,
+    body: unknown,
+  ): Promise<T> {
+    const response = await fetch(`${baseUrl}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...headers },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`UVerify extension error ${response.status}: ${text}`);
+    }
+    const text = await response.text();
+    if (!text) return undefined as unknown as T;
+    return JSON.parse(text) as T;
+  }
+
+  private async extensionGet<T>(
+    baseUrl: string,
+    headers: Record<string, string>,
+    path: string,
+  ): Promise<T> {
+    const response = await fetch(`${baseUrl}${path}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json', ...headers },
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`UVerify extension error ${response.status}: ${text}`);
+    }
+    const text = await response.text();
+    if (!text) return undefined as unknown as T;
+    return JSON.parse(text) as T;
   }
 
   /**
@@ -298,6 +361,115 @@ export class UVerifyApps {
       verifyUrl: `${this.verifyBaseUrl}/${hash}/${txHash}?${params}`,
     };
   }
+
+  /**
+   * Issue a tokenizable certificate — inserts a node into the on-chain sorted
+   * linked list and mints a CIP-68 NFT pair for the recipient.
+   *
+   * Requires the `tokenizable-certificate` backend extension to be enabled.
+   *
+   * @param address     Cardano address of the inserter / fee payer.
+   * @param input       Certificate parameters (key, owner, asset name, init UTxO).
+   * @param signCallback Callback to sign the transaction; falls back to the
+   *                    `signTx` option passed to the constructor.
+   * @returns The transaction hash, on-chain key, and verification URL.
+   */
+  async issueTokenizableCertificate(
+    address: string,
+    input: TokenizableCertificateInput,
+    signCallback?: TransactionSignCallback,
+  ): Promise<TokenizableCertificateResult> {
+    const { baseUrl, defaultHeaders, signTx, submitFn } =
+      this.requireExtensionSupport('issueTokenizableCertificate');
+    const sign = signCallback ?? signTx;
+
+    const unsignedTx = await this.extensionPost<string>(
+      baseUrl,
+      defaultHeaders,
+      '/api/v1/extension/tokenizable-certificate/insert',
+      {
+        inserterAddress: address,
+        key: input.key,
+        ownerPubKeyHash: input.ownerPubKeyHash,
+        assetName: input.assetNameHex,
+        initUtxoTxHash: input.initUtxoTxHash,
+        initUtxoOutputIndex: input.initUtxoOutputIndex,
+        ...(input.bootstrapTokenName ? { bootstrapTokenName: input.bootstrapTokenName } : {}),
+      },
+    );
+
+    const witnessSet = await sign(unsignedTx);
+    const txHash = await submitFn(unsignedTx, witnessSet);
+
+    return {
+      txHash,
+      key: input.key,
+      verifyUrl: `${this.verifyBaseUrl}/${input.key}/${txHash}`,
+    };
+  }
+
+  /**
+   * Query the on-chain status of a tokenizable certificate node.
+   *
+   * Requires the `tokenizable-certificate` backend extension to be enabled.
+   *
+   * @param key                 On-chain certificate key (SHA-256 hash).
+   * @param initUtxoTxHash      Transaction hash of the Init UTxO.
+   * @param initUtxoOutputIndex Output index of the Init UTxO.
+   */
+  async getTokenizableCertificateStatus(
+    key: string,
+    initUtxoTxHash: string,
+    initUtxoOutputIndex: number,
+  ): Promise<TokenizableCertificateStatus> {
+    const { baseUrl, defaultHeaders } =
+      this.requireExtensionSupport('getTokenizableCertificateStatus');
+    const params = new URLSearchParams({
+      initUtxoTxHash,
+      initUtxoOutputIndex: String(initUtxoOutputIndex),
+    });
+    return this.extensionGet<TokenizableCertificateStatus>(
+      baseUrl,
+      defaultHeaders,
+      `/api/v1/extension/tokenizable-certificate/status/${key}?${params}`,
+    );
+  }
+
+  /**
+   * Redeem (claim) a tokenizable certificate — the holder of the CIP-68 user NFT
+   * burns the token and removes the node from the on-chain linked list.
+   *
+   * Requires the `tokenizable-certificate` backend extension to be enabled.
+   *
+   * @param input       Claim parameters (key, claimer address, init UTxO, asset name).
+   * @param signCallback Callback to sign the transaction; falls back to the
+   *                    `signTx` option passed to the constructor.
+   * @returns The Cardano transaction hash of the claim transaction.
+   */
+  async redeemTokenizableCertificate(
+    input: TokenizableCertificateClaimInput,
+    signCallback?: TransactionSignCallback,
+  ): Promise<string> {
+    const { baseUrl, defaultHeaders, signTx, submitFn } =
+      this.requireExtensionSupport('redeemTokenizableCertificate');
+    const sign = signCallback ?? signTx;
+
+    const unsignedTx = await this.extensionPost<string>(
+      baseUrl,
+      defaultHeaders,
+      '/api/v1/extension/tokenizable-certificate/claim',
+      {
+        claimerAddress: input.claimerAddress,
+        key: input.key,
+        initUtxoTxHash: input.initUtxoTxHash,
+        initUtxoOutputIndex: input.initUtxoOutputIndex,
+        assetName: input.assetNameHex,
+      },
+    );
+
+    const witnessSet = await sign(unsignedTx);
+    return submitFn(unsignedTx, witnessSet);
+  }
 }
 
 export type {
@@ -309,4 +481,8 @@ export type {
   LaboratoryReportResult,
   CertificateOfInsuranceInput,
   CertificateOfInsuranceResult,
+  TokenizableCertificateInput,
+  TokenizableCertificateResult,
+  TokenizableCertificateStatus,
+  TokenizableCertificateClaimInput,
 } from './types.js';

@@ -132,7 +132,12 @@ public class UVerifyClient {
                         : "https://app.uverify.io/verify");
         this.apps = new UVerifyApps(
                 (addr, certs, signTx) -> issueCertificates(addr, null, certs, signTx),
-                verifyBaseUrl);
+                verifyBaseUrl,
+                new UVerifyApps.ExtensionSupport(
+                        (path, body) -> post(path, body, String.class),
+                        (path) -> getRawBody(path),
+                        (tx, witnessSet) -> submitTransactionInternal(tx, witnessSet),
+                        defaultSignTx));
     }
 
     // -------------------------------------------------------------------------
@@ -294,6 +299,12 @@ public class UVerifyClient {
 
     private void executeVoidRequest(HttpRequest request) {
         checkStatus(sendRequest(request));
+    }
+
+    private String getRawBody(String path) {
+        HttpResponse<String> response = sendRequest(buildGetRequest(path));
+        checkStatus(response);
+        return response.body();
     }
 
     private void checkStatus(HttpResponse<String> response) {

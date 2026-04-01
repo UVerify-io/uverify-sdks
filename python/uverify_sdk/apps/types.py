@@ -146,3 +146,64 @@ class LaboratoryReportResult:
     tx_hash: str
     """Cardano transaction hash of the issuance transaction."""
     certificates: List[LaboratoryReportCertificateResult]
+
+
+@dataclass
+class TokenizableCertificateInput:
+    """Input for issuing a tokenizable certificate (NFT-backed on-chain linked list node).
+
+    Requires the ``tokenizable-certificate`` backend extension to be enabled.
+    """
+
+    key: str
+    """SHA-256 hash of the content being certified — used as the on-chain key."""
+    owner_pub_key_hash: str
+    """Public key hash of the token owner (the recipient of the CIP-68 user NFT)."""
+    asset_name_hex: str
+    """Hex-encoded asset name for the minted CIP-68 label-222 user token."""
+    init_utxo_tx_hash: str
+    """Transaction hash of the Init UTxO that bootstrapped the on-chain linked list."""
+    init_utxo_output_index: int
+    """Output index of the Init UTxO."""
+    bootstrap_token_name: Optional[str] = None
+    """Bootstrap token name, if this linked list is whitelist-gated."""
+
+
+@dataclass
+class TokenizableCertificateResult:
+    """Result returned by :meth:`~uverify_sdk.apps.UVerifyApps.issue_tokenizable_certificate`."""
+
+    tx_hash: str
+    """Cardano transaction hash of the issuance transaction."""
+    key: str
+    """The on-chain key (SHA-256 hash of the certified content)."""
+    verify_url: str
+    """Verification URL for this certificate."""
+
+
+@dataclass
+class TokenizableCertificateStatus:
+    """On-chain status of a tokenizable certificate node."""
+
+    key: str
+    """The on-chain certificate key."""
+    claimed: bool
+    """Whether the certificate has been claimed (user token redeemed from the contract)."""
+    owner: Optional[str] = None
+    """Address of the current token holder, if claimed."""
+
+
+@dataclass
+class TokenizableCertificateClaimInput:
+    """Input for claiming (redeeming) a tokenizable certificate."""
+
+    key: str
+    """The on-chain certificate key to claim."""
+    claimer_address: str
+    """Cardano address of the claimer (must hold the CIP-68 user token)."""
+    init_utxo_tx_hash: str
+    """Transaction hash of the Init UTxO."""
+    init_utxo_output_index: int
+    """Output index of the Init UTxO."""
+    asset_name_hex: str
+    """Hex-encoded asset name of the user token to redeem."""

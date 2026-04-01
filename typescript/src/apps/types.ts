@@ -181,3 +181,63 @@ export interface CertificateOfInsuranceResult {
   /** Verification URL for this certificate. */
   verifyUrl: string;
 }
+
+/**
+ * Input for issuing a tokenizable certificate (NFT-backed on-chain linked list node).
+ *
+ * Requires the `tokenizable-certificate` backend extension to be enabled.
+ */
+export interface TokenizableCertificateInput {
+  /** SHA-256 hash of the content being certified — used as the on-chain key. */
+  key: string;
+  /** Public key hash of the token owner (the recipient of the CIP-68 user NFT). */
+  ownerPubKeyHash: string;
+  /** Hex-encoded asset name for the minted CIP-68 label-222 user token. */
+  assetNameHex: string;
+  /** Transaction hash of the Init UTxO that bootstrapped the on-chain linked list. */
+  initUtxoTxHash: string;
+  /** Output index of the Init UTxO. */
+  initUtxoOutputIndex: number;
+  /** Bootstrap token name, if this linked list is whitelist-gated. */
+  bootstrapTokenName?: string;
+}
+
+/**
+ * Result returned by {@link UVerifyApps.issueTokenizableCertificate}.
+ */
+export interface TokenizableCertificateResult {
+  /** Cardano transaction hash of the issuance transaction. */
+  txHash: string;
+  /** The on-chain key (SHA-256 hash of the certified content). */
+  key: string;
+  /** Verification URL for this certificate. */
+  verifyUrl: string;
+}
+
+/**
+ * On-chain status of a tokenizable certificate node.
+ */
+export interface TokenizableCertificateStatus {
+  /** The on-chain certificate key. */
+  key: string;
+  /** Whether the certificate has been claimed (user token redeemed from the contract). */
+  claimed: boolean;
+  /** Address of the current token holder, if claimed. */
+  owner?: string;
+}
+
+/**
+ * Input for claiming (redeeming) a tokenizable certificate.
+ */
+export interface TokenizableCertificateClaimInput {
+  /** The on-chain certificate key to claim. */
+  key: string;
+  /** Cardano address of the claimer (must hold the CIP-68 user token). */
+  claimerAddress: string;
+  /** Transaction hash of the Init UTxO. */
+  initUtxoTxHash: string;
+  /** Output index of the Init UTxO. */
+  initUtxoOutputIndex: number;
+  /** Hex-encoded asset name of the user token to redeem. */
+  assetNameHex: string;
+}
