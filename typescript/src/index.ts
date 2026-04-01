@@ -16,7 +16,14 @@ export type {
   MessageSignCallback,
   TransactionSignCallback,
 } from './UVerifyClient.js';
-export { UVerifyApiError, UVerifyValidationError, WaitForTimeoutError } from './errors.js';
+export {
+  UVerifyApiError,
+  NotFoundError,
+  RateLimitError,
+  InsufficientFundsError,
+  UVerifyValidationError,
+  WaitForTimeoutError,
+} from './errors.js';
 export type {
   CertificateResponse,
   CertificateData,

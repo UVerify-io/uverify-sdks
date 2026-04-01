@@ -1,4 +1,11 @@
-import { UVerifyApiError, UVerifyValidationError, WaitForTimeoutError } from './errors.js';
+import {
+  UVerifyApiError,
+  UVerifyValidationError,
+  WaitForTimeoutError,
+  NotFoundError,
+  RateLimitError,
+  InsufficientFundsError,
+} from './errors.js';
 import { UVerifyApps } from './apps/index.js';
 import type {
   CertificateData,
@@ -271,16 +278,29 @@ export class UVerifyClient {
       } catch {
         responseBody = rawBody;
       }
-      const bodyMessage =
-        (typeof responseBody === 'object' && responseBody !== null
-          ? (responseBody as Record<string, unknown>).message ??
-            (responseBody as Record<string, unknown>).error
-          : typeof responseBody === 'string' ? responseBody : undefined) as string | undefined;
-      throw new UVerifyApiError(
-        bodyMessage ?? `UVerify API error ${response.status}: ${response.statusText}`,
-        response.status,
-        responseBody
-      );
+      const body = typeof responseBody === 'object' && responseBody !== null
+        ? responseBody as Record<string, unknown>
+        : null;
+      const bodyMessage = (
+        body?.message ??
+        body?.error ??
+        (body?.status as Record<string, unknown> | undefined)?.message ??
+        (typeof responseBody === 'string' ? responseBody : undefined)
+      ) as string | undefined;
+      const message = bodyMessage ?? `UVerify API error ${response.status}: ${response.statusText}`;
+      if (response.status === 404) {
+        throw new NotFoundError(message, responseBody);
+      }
+      if (response.status === 429) {
+        throw new RateLimitError(message, responseBody);
+      }
+      if (
+        response.status === 400 &&
+        /no utxo|insufficient fund/i.test(message)
+      ) {
+        throw new InsufficientFundsError(message, responseBody);
+      }
+      throw new UVerifyApiError(message, response.status, responseBody);
     }
 
     // Some endpoints return an empty body on success
@@ -462,7 +482,7 @@ export class UVerifyClient {
         return await this._submitTransaction(unsignedTransaction, witnessSet);
       } catch (err) {
         lastError = err;
-        if (err instanceof UVerifyApiError && attempt < maxAttempts) {
+        if (err instanceof UVerifyApiError && !(err instanceof InsufficientFundsError) && attempt < maxAttempts) {
           console.log(
             `Certificate issuance failed (attempt ${attempt}/${maxAttempts}), ` +
               `retrying in 5 s (waiting for chain state to propagate) …`
@@ -622,24 +642,20 @@ export class UVerifyClient {
       }
       return result.txHash;
     } catch (err) {
-      if (err instanceof UVerifyApiError) {
-        if (err.statusCode === 404) {
-          throw new UVerifyApiError(
-            'Faucet endpoint not found (HTTP 404). ' +
-              'The faucet is only available on backends started with FAUCET_ENABLED=true. ' +
-              'This feature does not exist on mainnet — acquire ADA from a cryptocurrency exchange instead.',
-            404,
-            err.responseBody
-          );
-        }
-        if (err.statusCode === 429) {
-          throw new UVerifyApiError(
-            'Faucet cooldown active (HTTP 429). ' +
-              'This address recently received testnet funds. Please wait a few minutes before trying again.',
-            429,
-            err.responseBody
-          );
-        }
+      if (err instanceof NotFoundError) {
+        throw new NotFoundError(
+          'Faucet endpoint not found (HTTP 404). ' +
+            'The faucet is only available on backends started with FAUCET_ENABLED=true. ' +
+            'This feature does not exist on mainnet — acquire ADA from a cryptocurrency exchange instead.',
+          err.responseBody
+        );
+      }
+      if (err instanceof RateLimitError) {
+        throw new RateLimitError(
+          'Faucet cooldown active (HTTP 429). ' +
+            'This address recently received testnet funds. Please wait a few minutes before trying again.',
+          err.responseBody
+        );
       }
       throw err;
     }

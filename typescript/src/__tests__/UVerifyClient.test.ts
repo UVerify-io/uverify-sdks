@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { UVerifyClient } from '../UVerifyClient.js';
-import { UVerifyApiError, UVerifyValidationError } from '../errors.js';
+import {
+  UVerifyApiError,
+  UVerifyValidationError,
+  NotFoundError,
+  RateLimitError,
+  InsufficientFundsError,
+} from '../errors.js';
 import type {
   CertificateResponse,
   BuildTransactionResponse,
@@ -248,6 +254,77 @@ describe('UVerifyClient', () => {
       }
       expect(caught?.responseBody).toEqual(body);
     });
+
+    it('throws NotFoundError on a 404 response', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        text: () => Promise.resolve('{"message":"not found"}'),
+      }));
+
+      const client = new UVerifyClient();
+      await expect(client.verify('missing')).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it('NotFoundError is also an instance of UVerifyApiError', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        text: () => Promise.resolve('{"message":"not found"}'),
+      }));
+
+      const client = new UVerifyClient();
+      await expect(client.verify('missing')).rejects.toBeInstanceOf(UVerifyApiError);
+    });
+
+    it('throws RateLimitError on a 429 response', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        statusText: 'Too Many Requests',
+        text: () => Promise.resolve('{"message":"rate limit exceeded"}'),
+      }));
+
+      const client = new UVerifyClient();
+      await expect(client.verify('hash')).rejects.toBeInstanceOf(RateLimitError);
+    });
+
+    it('throws InsufficientFundsError on 400 with no-UTXOs message', async () => {
+      const body = { status: { message: 'No UTXOs found for user address' } };
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        text: () => Promise.resolve(JSON.stringify(body)),
+      }));
+
+      const client = new UVerifyClient();
+      await expect(
+        client.core.buildTransaction({ type: 'default', address: 'addr1test', certificates: [] })
+      ).rejects.toBeInstanceOf(InsufficientFundsError);
+    });
+
+    it('throws plain UVerifyApiError on 400 without funds-related message', async () => {
+      const body = { message: 'invalid algorithm' };
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        text: () => Promise.resolve(JSON.stringify(body)),
+      }));
+
+      const client = new UVerifyClient();
+      let caught: unknown;
+      try {
+        await client.verify('x');
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(UVerifyApiError);
+      expect(caught).not.toBeInstanceOf(InsufficientFundsError);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -452,6 +529,118 @@ describe('UVerifyClient', () => {
       await expect(
         client.issueCertificates('addr1test', [{ hash: 'abc' }])
       ).rejects.toThrow(UVerifyValidationError);
+    });
+
+    it('does not retry on InsufficientFundsError', async () => {
+      const body = { status: { message: 'No UTXOs found for user address' } };
+      const fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        text: () => Promise.resolve(JSON.stringify(body)),
+      });
+      vi.stubGlobal('fetch', fetch);
+
+      const client = new UVerifyClient({ signTx: vi.fn().mockResolvedValue('w') });
+      await expect(
+        client.issueCertificates('addr1test', [{ hash: 'abc' }])
+      ).rejects.toBeInstanceOf(InsufficientFundsError);
+
+      // Build was called exactly once — no retry
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('retries up to 3 times on generic UVerifyApiError', async () => {
+      vi.useFakeTimers();
+      const body = { message: 'UTxO already consumed' };
+      const fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        text: () => Promise.resolve(JSON.stringify(body)),
+      });
+      vi.stubGlobal('fetch', fetch);
+
+      const client = new UVerifyClient({ signTx: vi.fn().mockResolvedValue('w') });
+      // Attach rejection handler immediately to avoid unhandled rejection warning
+      const result = client.issueCertificates('addr1test', [{ hash: 'abc' }]).catch((e) => e);
+      await vi.runAllTimersAsync();
+      const err = await result;
+      expect(err).toBeInstanceOf(UVerifyApiError);
+      expect(fetch).toHaveBeenCalledTimes(3);
+
+      vi.useRealTimers();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // fundWallet
+  // -------------------------------------------------------------------------
+
+  describe('fundWallet', () => {
+    const CHALLENGE_RESPONSE = {
+      address: 'addr_test1',
+      message: 'faucet-challenge',
+      signature: 'server_sig',
+      timestamp: 1700000000,
+    };
+    const CLAIM_RESPONSE = { txHash: 'faucet_tx_001' };
+
+    function faucetFetch() {
+      return vi.fn()
+        .mockResolvedValueOnce({
+          ok: true, status: 200, statusText: 'OK',
+          text: () => Promise.resolve(JSON.stringify(CHALLENGE_RESPONSE)),
+        })
+        .mockResolvedValueOnce({
+          ok: true, status: 200, statusText: 'OK',
+          text: () => Promise.resolve(JSON.stringify(CLAIM_RESPONSE)),
+        });
+    }
+
+    it('returns the faucet transaction hash on success', async () => {
+      vi.stubGlobal('fetch', faucetFetch());
+      const signMessage = vi.fn().mockResolvedValue({ key: 'k', signature: 's' });
+
+      const client = new UVerifyClient();
+      const txHash = await client.fundWallet('addr_test1', signMessage);
+
+      expect(txHash).toBe('faucet_tx_001');
+      expect(signMessage).toHaveBeenCalledWith('faucet-challenge');
+    });
+
+    it('throws NotFoundError with faucet-specific message on 404', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: false, status: 404, statusText: 'Not Found',
+        text: () => Promise.resolve('{"message":"not found"}'),
+      }));
+
+      const client = new UVerifyClient();
+      let caught: unknown;
+      try {
+        await client.fundWallet('addr_test1', vi.fn().mockResolvedValue({ key: 'k', signature: 's' }));
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(NotFoundError);
+      expect((caught as NotFoundError).message).toContain('FAUCET_ENABLED');
+    });
+
+    it('throws RateLimitError with faucet-specific message on 429', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: false, status: 429, statusText: 'Too Many Requests',
+        text: () => Promise.resolve('{"message":"cooldown"}'),
+      }));
+
+      const client = new UVerifyClient();
+      let caught: unknown;
+      try {
+        await client.fundWallet('addr_test1', vi.fn().mockResolvedValue({ key: 'k', signature: 's' }));
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(RateLimitError);
+      expect((caught as RateLimitError).message).toContain('cooldown');
     });
   });
 

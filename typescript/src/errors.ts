@@ -10,6 +10,63 @@ export class UVerifyApiError extends Error {
   }
 }
 
+/**
+ * Thrown when the API returns HTTP 404 (resource not found).
+ *
+ * When thrown from {@link UVerifyClient.fundWallet}, this indicates the faucet
+ * endpoint is not available on this backend deployment.
+ */
+export class NotFoundError extends UVerifyApiError {
+  constructor(message: string, responseBody?: unknown) {
+    super(message, 404, responseBody);
+    this.name = 'NotFoundError';
+  }
+}
+
+/**
+ * Thrown when the API returns HTTP 429 (rate limit / cooldown active).
+ *
+ * @example
+ * ```ts
+ * try {
+ *   await client.fundWallet(address, signMessage);
+ * } catch (err) {
+ *   if (err instanceof RateLimitError) {
+ *     console.warn('Faucet cooldown active, try again later.');
+ *   }
+ * }
+ * ```
+ */
+export class RateLimitError extends UVerifyApiError {
+  constructor(message: string, responseBody?: unknown) {
+    super(message, 429, responseBody);
+    this.name = 'RateLimitError';
+  }
+}
+
+/**
+ * Thrown when a transaction cannot be built because the wallet has no spendable
+ * UTXOs (HTTP 400, "No UTXOs found for user address").
+ *
+ * Catch this specifically to trigger a faucet top-up flow rather than retrying:
+ *
+ * ```ts
+ * try {
+ *   await client.issueCertificates(address, certs, signTx);
+ * } catch (err) {
+ *   if (err instanceof InsufficientFundsError) {
+ *     await client.fundWallet(address, signMessage);
+ *   }
+ * }
+ * ```
+ */
+export class InsufficientFundsError extends UVerifyApiError {
+  constructor(message: string, responseBody?: unknown) {
+    super(message, 400, responseBody);
+    this.name = 'InsufficientFundsError';
+  }
+}
+
 /** Thrown when a required parameter is missing or invalid. */
 export class UVerifyValidationError extends Error {
   constructor(message: string) {
