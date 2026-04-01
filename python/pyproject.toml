@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "uverify-sdk"
-version = "0.1.4"
+version = "0.1.5"
 description = "Official Python SDK for the UVerify API"
 readme = "README.md"
 license = { text = "AGPL-3.0" }
