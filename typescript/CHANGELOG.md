@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/UVerify-io/uverify-sdks/compare/typescript-v0.1.6...typescript-v0.1.7) (2026-04-01)
+
+
+### Features
+
+* add actual errors to the typescript sdk so that clients can react individually ([ebef99f](https://github.com/UVerify-io/uverify-sdks/commit/ebef99f881eb691b4b7a083f7c6162f561e22837))
+
 ## [0.1.6](https://github.com/UVerify-io/uverify-sdks/compare/typescript-v0.1.5...typescript-v0.1.6) (2026-04-01)
 
 
