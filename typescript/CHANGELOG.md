@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/UVerify-io/uverify-sdks/compare/typescript-v0.1.5...typescript-v0.1.6) (2026-04-01)
+
+
+### Features
+
+* add tokenized api and add new error type ([e06120c](https://github.com/UVerify-io/uverify-sdks/commit/e06120c26a44d8208ccccff44a37ba4112147566))
+
 ## [0.1.5](https://github.com/UVerify-io/uverify-sdks/compare/typescript-v0.1.4...typescript-v0.1.5) (2026-03-14)
 
 
