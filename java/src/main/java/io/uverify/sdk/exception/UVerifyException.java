@@ -19,6 +19,12 @@ public class UVerifyException extends RuntimeException {
         this.responseBody = responseBody;
     }
 
+    public UVerifyException(String message) {
+        super(message);
+        this.statusCode = -1;
+        this.responseBody = null;
+    }
+
     public UVerifyException(String message, Throwable cause) {
         super(message, cause);
         this.statusCode = -1;
