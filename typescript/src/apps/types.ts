@@ -187,9 +187,26 @@ export interface CertificateOfInsuranceResult {
  *
  * Requires the `tokenizable-certificate` backend extension to be enabled.
  */
+/**
+ * Configuration embedded in the HEAD datum on first Init.
+ * Only required when no linked list exists yet for the given init UTxO.
+ * The `uverifyValidatorHash` is set by the backend; all other fields come from the caller.
+ */
+export interface TokenizableConfig {
+  /** Payment key hash of the deployer wallet. Derive with e.g. `resolvePaymentKeyHash(address)`. */
+  deployer: string;
+  /** Payment key hashes of wallets allowed to insert nodes. Empty list means anyone can insert. */
+  allowedInserters?: string[];
+  /** Hex-encoded CIP-68 script hash. Null disables CIP-68 minting. */
+  cip68ScriptAddress?: string | null;
+}
+
 export interface TokenizableCertificateInput {
-  /** SHA-256 hash of the content being certified — used as the on-chain key. */
-  key: string;
+  /**
+   * Certificate to register on-chain. The `hash` becomes the node key;
+   * `metadata` (JSON string) is merged with backend-generated fields and stored on-chain.
+   */
+  certificate: { hash: string; metadata?: string };
   /** Public key hash of the token owner (the recipient of the CIP-68 user NFT). */
   ownerPubKeyHash: string;
   /** Hex-encoded asset name for the minted CIP-68 label-222 user token. */
@@ -200,6 +217,11 @@ export interface TokenizableCertificateInput {
   initUtxoOutputIndex: number;
   /** Bootstrap token name, if this linked list is whitelist-gated. */
   bootstrapTokenName?: string;
+  /**
+   * Config for the HEAD datum — only needed on the very first issuance (Init path).
+   * The backend will auto-fill `uverifyValidatorHash`; the caller provides the rest.
+   */
+  config?: TokenizableConfig;
 }
 
 /**

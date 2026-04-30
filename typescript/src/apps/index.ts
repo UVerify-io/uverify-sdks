@@ -96,7 +96,11 @@ export class UVerifyApps {
     }
     const text = await response.text();
     if (!text) return undefined as unknown as T;
-    return JSON.parse(text) as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      return text as unknown as T;
+    }
   }
 
   private async extensionGet<T>(
@@ -386,15 +390,28 @@ export class UVerifyApps {
     const unsignedTx = await this.extensionPost<string>(
       baseUrl,
       defaultHeaders,
-      '/api/v1/extension/tokenizable-certificate/insert',
+      '/api/v1/extension/tokenizable-certificate/build',
       {
-        inserterAddress: address,
-        key: input.key,
+        type: 'CREATE',
+        senderAddress: address,
+        certificate: {
+          hash: input.certificate.hash,
+          ...(input.certificate.metadata ? { metadata: input.certificate.metadata } : {}),
+        },
         ownerPubKeyHash: input.ownerPubKeyHash,
         assetName: input.assetNameHex,
         initUtxoTxHash: input.initUtxoTxHash,
         initUtxoOutputIndex: input.initUtxoOutputIndex,
         ...(input.bootstrapTokenName ? { bootstrapTokenName: input.bootstrapTokenName } : {}),
+        ...(input.config
+          ? {
+              config: {
+                deployer: input.config.deployer,
+                allowedInserters: input.config.allowedInserters ?? [],
+                cip68ScriptAddress: input.config.cip68ScriptAddress ?? null,
+              },
+            }
+          : {}),
       },
     );
 
@@ -403,8 +420,8 @@ export class UVerifyApps {
 
     return {
       txHash,
-      key: input.key,
-      verifyUrl: `${this.verifyBaseUrl}/${input.key}/${txHash}`,
+      key: input.certificate.hash,
+      verifyUrl: `${this.verifyBaseUrl}/${input.certificate.hash}/${txHash}`,
     };
   }
 
@@ -457,13 +474,13 @@ export class UVerifyApps {
     const unsignedTx = await this.extensionPost<string>(
       baseUrl,
       defaultHeaders,
-      '/api/v1/extension/tokenizable-certificate/claim',
+      '/api/v1/extension/tokenizable-certificate/build',
       {
-        claimerAddress: input.claimerAddress,
-        key: input.key,
+        type: 'REDEEM',
+        senderAddress: input.claimerAddress,
+        certificate: { hash: input.key },
         initUtxoTxHash: input.initUtxoTxHash,
         initUtxoOutputIndex: input.initUtxoOutputIndex,
-        assetName: input.assetNameHex,
       },
     );
 
@@ -481,6 +498,7 @@ export type {
   LaboratoryReportResult,
   CertificateOfInsuranceInput,
   CertificateOfInsuranceResult,
+  TokenizableConfig,
   TokenizableCertificateInput,
   TokenizableCertificateResult,
   TokenizableCertificateStatus,

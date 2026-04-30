@@ -10,7 +10,7 @@ _T = TypeVar("_T")
 import requests
 
 from .apps import UVerifyApps
-from .exceptions import UVerifyApiError, UVerifyValidationError
+from .exceptions import InsufficientFundsError, NotFoundError, RateLimitError, UVerifyApiError, UVerifyValidationError
 from .models.certificate import CertificateData, CertificateResponse
 from .models.transaction import (
     BuildTransactionRequest,
@@ -400,6 +400,8 @@ class UVerifyClient:
                 witness_set = cb(response.unsigned_transaction)
                 return self._submit_transaction(response.unsigned_transaction, witness_set)
             except UVerifyApiError as exc:
+                if exc.status_code == 400 and "no utxos found" in str(exc).lower():
+                    raise InsufficientFundsError(str(exc), exc.response_body) from exc
                 last_error = exc
                 if attempt < max_attempts:
                     print(
@@ -523,18 +525,16 @@ class UVerifyClient:
             )
         except UVerifyApiError as e:
             if e.status_code == 404:
-                raise UVerifyApiError(
+                raise NotFoundError(
                     "Faucet endpoint not found (HTTP 404). "
                     "The faucet is only available on backends started with FAUCET_ENABLED=true. "
                     "This feature does not exist on mainnet — acquire ADA from a cryptocurrency exchange instead.",
-                    404,
                     e.response_body,
                 ) from e
             if e.status_code == 429:
-                raise UVerifyApiError(
+                raise RateLimitError(
                     "Faucet cooldown active (HTTP 429). "
                     "This address recently received testnet funds. Please wait a few minutes before trying again.",
-                    429,
                     e.response_body,
                 ) from e
             raise

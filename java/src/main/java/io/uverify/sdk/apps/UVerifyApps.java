@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -292,43 +293,193 @@ public class UVerifyApps {
     }
 
     // -------------------------------------------------------------------------
+    // Certificate of Insurance types
+    // -------------------------------------------------------------------------
+
+    /** Input for a Certificate of Insurance (COI). */
+    public static class CertificateOfInsuranceInput {
+        private final String policyNumber;
+        private final String insurer;
+        private final String insured;
+        private final String effectiveDate;
+        private final String expirationDate;
+        private final Map<String, String> coverages;
+        private String producer;
+        private String insuredAddress;
+        private String certificateHolder;
+        private String certificateHolderAddress;
+        private Boolean additionalInsured;
+        private Boolean waiverOfSubrogation;
+
+        /**
+         * @param policyNumber   Unique policy reference number — used as the on-chain fingerprint.
+         * @param insurer        Name of the issuing insurance company.
+         * @param insured        Name of the insured business or individual (stored as SHA-256 hash).
+         * @param effectiveDate  Policy start date in ISO format (e.g. {@code "2025-01-01"}).
+         * @param expirationDate Policy end date in ISO format — drives the VALID/EXPIRED badge.
+         * @param coverages      Coverage limits keyed by type. Keys get a {@code cov_} prefix automatically.
+         */
+        public CertificateOfInsuranceInput(String policyNumber, String insurer, String insured,
+                                           String effectiveDate, String expirationDate,
+                                           Map<String, String> coverages) {
+            this.policyNumber = policyNumber;
+            this.insurer = insurer;
+            this.insured = insured;
+            this.effectiveDate = effectiveDate;
+            this.expirationDate = expirationDate;
+            this.coverages = coverages;
+        }
+
+        public String getPolicyNumber()   { return policyNumber; }
+        public String getInsurer()        { return insurer; }
+        public String getInsured()        { return insured; }
+        public String getEffectiveDate()  { return effectiveDate; }
+        public String getExpirationDate() { return expirationDate; }
+        public Map<String, String> getCoverages() { return coverages; }
+        public String getProducer()                    { return producer; }
+        public String getInsuredAddress()              { return insuredAddress; }
+        public String getCertificateHolder()           { return certificateHolder; }
+        public String getCertificateHolderAddress()    { return certificateHolderAddress; }
+        public Boolean getAdditionalInsured()          { return additionalInsured; }
+        public Boolean getWaiverOfSubrogation()        { return waiverOfSubrogation; }
+
+        /** Name of the insurance broker or agent. */
+        public CertificateOfInsuranceInput producer(String v)                 { this.producer = v; return this; }
+        /** Address of the insured (stored as SHA-256 hash on-chain). */
+        public CertificateOfInsuranceInput insuredAddress(String v)           { this.insuredAddress = v; return this; }
+        /** Name of the party requiring proof of insurance (stored as SHA-256 hash on-chain). */
+        public CertificateOfInsuranceInput certificateHolder(String v)        { this.certificateHolder = v; return this; }
+        /** Address of the certificate holder (stored as SHA-256 hash on-chain). */
+        public CertificateOfInsuranceInput certificateHolderAddress(String v) { this.certificateHolderAddress = v; return this; }
+        /** Whether the certificate holder is named as an additional insured. */
+        public CertificateOfInsuranceInput additionalInsured(boolean v)       { this.additionalInsured = v; return this; }
+        /** Whether a waiver of subrogation applies in favour of the certificate holder. */
+        public CertificateOfInsuranceInput waiverOfSubrogation(boolean v)     { this.waiverOfSubrogation = v; return this; }
+    }
+
+    /** Result returned by {@link #issueCertificateOfInsurance}. */
+    public static class CertificateOfInsuranceResult {
+        private final String txHash;
+        private final String hash;
+        private final String verifyUrl;
+
+        CertificateOfInsuranceResult(String txHash, String hash, String verifyUrl) {
+            this.txHash = txHash;
+            this.hash = hash;
+            this.verifyUrl = verifyUrl;
+        }
+
+        /** Cardano transaction hash of the issuance transaction. */
+        public String getTxHash()    { return txHash; }
+        /** SHA-256 hash of {@code policyNumber} — the on-chain certificate fingerprint. */
+        public String getHash()      { return hash; }
+        /** Verification URL for this certificate. */
+        public String getVerifyUrl() { return verifyUrl; }
+    }
+
+    // -------------------------------------------------------------------------
     // Tokenizable certificate types
     // -------------------------------------------------------------------------
 
+    /**
+     * Configuration embedded in the HEAD datum on the very first Init transaction.
+     *
+     * <p>Only required when no linked list exists yet for the given init UTxO.
+     * The backend fills in {@code uverifyValidatorHash}; all other fields come from the caller.
+     */
+    public static class TokenizableConfig {
+        private final String deployer;
+        private final List<String> allowedInserters;
+        private final String cip68ScriptAddress;
+
+        /**
+         * @param deployer           Payment key hash of the deployer wallet.
+         * @param allowedInserters   Payment key hashes of wallets allowed to insert nodes.
+         *                           Empty list or {@code null} means anyone can insert.
+         * @param cip68ScriptAddress Hex-encoded CIP-68 script hash, or {@code null} to disable minting.
+         */
+        public TokenizableConfig(String deployer, List<String> allowedInserters, String cip68ScriptAddress) {
+            this.deployer = deployer;
+            this.allowedInserters = allowedInserters != null ? allowedInserters : Collections.emptyList();
+            this.cip68ScriptAddress = cip68ScriptAddress;
+        }
+
+        /** Convenience constructor — anyone can insert, CIP-68 minting enabled via backend default. */
+        public TokenizableConfig(String deployer) {
+            this(deployer, Collections.emptyList(), null);
+        }
+
+        public String getDeployer()              { return deployer; }
+        public List<String> getAllowedInserters() { return allowedInserters; }
+        public String getCip68ScriptAddress()    { return cip68ScriptAddress; }
+    }
+
+    /** Certificate fields passed to the tokenizable-certificate extension. */
+    public static class TokenizableCertificateData {
+        private final String hash;
+        private final String metadata;
+
+        /**
+         * @param hash     SHA-256 hash of the certified content — becomes the on-chain node key.
+         * @param metadata Optional JSON string of caller-supplied metadata merged on-chain.
+         */
+        public TokenizableCertificateData(String hash, String metadata) {
+            this.hash = hash;
+            this.metadata = metadata;
+        }
+
+        /** Convenience constructor without metadata. */
+        public TokenizableCertificateData(String hash) {
+            this(hash, null);
+        }
+
+        public String getHash()     { return hash; }
+        public String getMetadata() { return metadata; }
+    }
+
     /** Input for issuing a tokenizable certificate (NFT-backed on-chain linked list node). */
     public static class TokenizableCertificateInput {
-        private final String key;
+        private final TokenizableCertificateData certificate;
         private final String ownerPubKeyHash;
         private final String assetNameHex;
         private final String initUtxoTxHash;
         private final int initUtxoOutputIndex;
         private String bootstrapTokenName;
+        private TokenizableConfig config;
 
         /**
-         * @param key                  SHA-256 hash of the content — used as the on-chain key.
+         * @param certificate          Certificate data ({@code hash} becomes the on-chain key).
          * @param ownerPubKeyHash      Public key hash of the token owner (CIP-68 user NFT recipient).
          * @param assetNameHex         Hex-encoded asset name for the minted CIP-68 user token.
          * @param initUtxoTxHash       Transaction hash of the Init UTxO.
          * @param initUtxoOutputIndex  Output index of the Init UTxO.
          */
-        public TokenizableCertificateInput(String key, String ownerPubKeyHash, String assetNameHex,
-                                           String initUtxoTxHash, int initUtxoOutputIndex) {
-            this.key = key;
+        public TokenizableCertificateInput(TokenizableCertificateData certificate, String ownerPubKeyHash,
+                                           String assetNameHex, String initUtxoTxHash, int initUtxoOutputIndex) {
+            this.certificate = certificate;
             this.ownerPubKeyHash = ownerPubKeyHash;
             this.assetNameHex = assetNameHex;
             this.initUtxoTxHash = initUtxoTxHash;
             this.initUtxoOutputIndex = initUtxoOutputIndex;
         }
 
-        public String getKey()                  { return key; }
-        public String getOwnerPubKeyHash()      { return ownerPubKeyHash; }
-        public String getAssetNameHex()         { return assetNameHex; }
-        public String getInitUtxoTxHash()       { return initUtxoTxHash; }
-        public int getInitUtxoOutputIndex()     { return initUtxoOutputIndex; }
-        public String getBootstrapTokenName()   { return bootstrapTokenName; }
+        public TokenizableCertificateData getCertificate()  { return certificate; }
+        public String getOwnerPubKeyHash()                   { return ownerPubKeyHash; }
+        public String getAssetNameHex()                      { return assetNameHex; }
+        public String getInitUtxoTxHash()                    { return initUtxoTxHash; }
+        public int getInitUtxoOutputIndex()                  { return initUtxoOutputIndex; }
+        public String getBootstrapTokenName()                { return bootstrapTokenName; }
+        public TokenizableConfig getConfig()                 { return config; }
 
+        /** Optional: set a bootstrap token name if this linked list is whitelist-gated. */
         public TokenizableCertificateInput bootstrapTokenName(String v) {
             this.bootstrapTokenName = v;
+            return this;
+        }
+
+        /** Optional: set the HEAD config — only needed on the very first issuance (Init path). */
+        public TokenizableCertificateInput config(TokenizableConfig v) {
+            this.config = v;
             return this;
         }
     }
@@ -676,6 +827,77 @@ public class UVerifyApps {
     }
 
     /**
+     * Issue a Certificate of Insurance (COI) on-chain.
+     *
+     * <p>The hash is computed as {@code sha256(policyNumber)}, uniquely identifying this policy.
+     * GDPR-sensitive party fields ({@code insured}, {@code insuredAddress}, {@code certificateHolder},
+     * {@code certificateHolderAddress}) are stored as SHA-256 hashes on-chain and revealed as
+     * plaintext via URL parameters in the returned {@code verifyUrl}.
+     *
+     * <p>{@code coverages} keys receive a {@code cov_} prefix automatically
+     * (e.g. {@code general_liability} → {@code cov_general_liability}).
+     *
+     * <p>The update policy is {@code restricted} — only the issuing insurance company wallet may
+     * push subsequent updates (e.g. cancellations or renewals).
+     *
+     * @param address Cardano address of the signer / payer.
+     * @param coi     Certificate of Insurance input.
+     * @param signTx  Wallet callback to sign the transaction; {@code null} uses the
+     *                constructor-level default on {@link io.uverify.sdk.UVerifyClient}.
+     * @return {@link CertificateOfInsuranceResult} with the transaction hash and verification URL.
+     */
+    public CertificateOfInsuranceResult issueCertificateOfInsurance(
+            String address, CertificateOfInsuranceInput coi, TransactionSignCallback signTx) {
+        String dataHash         = sha256hex(coi.getPolicyNumber());
+        String insuredHash      = sha256hex(coi.getInsured());
+        String insuredAddrHash  = coi.getInsuredAddress() != null ? sha256hex(coi.getInsuredAddress()) : null;
+        String holderHash       = coi.getCertificateHolder() != null ? sha256hex(coi.getCertificateHolder()) : null;
+        String holderAddrHash   = coi.getCertificateHolderAddress() != null ? sha256hex(coi.getCertificateHolderAddress()) : null;
+
+        Map<String, String> metadata = new LinkedHashMap<>();
+        metadata.put("uverify_template_id",   "certificateOfInsurance");
+        metadata.put("uverify_update_policy", "restricted");
+        metadata.put("issuer",                coi.getInsurer());
+        metadata.put("uv_url_insured",        insuredHash);
+        metadata.put("policy_number",         coi.getPolicyNumber());
+        metadata.put("effective_date",        coi.getEffectiveDate());
+        metadata.put("expiration_date",       coi.getExpirationDate());
+        putIfNotNull(metadata, "producer",                          coi.getProducer());
+        putIfNotNull(metadata, "uv_url_insured_address",            insuredAddrHash);
+        putIfNotNull(metadata, "uv_url_certificate_holder",         holderHash);
+        putIfNotNull(metadata, "uv_url_certificate_holder_address", holderAddrHash);
+        if (coi.getAdditionalInsured() != null) {
+            metadata.put("additional_insured", String.valueOf(coi.getAdditionalInsured()));
+        }
+        if (coi.getWaiverOfSubrogation() != null) {
+            metadata.put("waiver_of_subrogation", String.valueOf(coi.getWaiverOfSubrogation()));
+        }
+        coi.getCoverages().forEach((k, v) -> metadata.put("cov_" + k, v));
+
+        String txHash = issueFn.issue(
+                address,
+                List.of(new CertificateData(dataHash, "SHA-256", toJson(metadata))),
+                signTx);
+
+        StringBuilder urlParams = new StringBuilder("?insured=").append(urlEncode(coi.getInsured()));
+        if (coi.getInsuredAddress() != null)
+            urlParams.append("&insured_address=").append(urlEncode(coi.getInsuredAddress()));
+        if (coi.getCertificateHolder() != null)
+            urlParams.append("&certificate_holder=").append(urlEncode(coi.getCertificateHolder()));
+        if (coi.getCertificateHolderAddress() != null)
+            urlParams.append("&certificate_holder_address=").append(urlEncode(coi.getCertificateHolderAddress()));
+
+        String verifyUrl = verifyBaseUrl + "/" + dataHash + "/" + txHash + urlParams;
+        return new CertificateOfInsuranceResult(txHash, dataHash, verifyUrl);
+    }
+
+    /** Issue a Certificate of Insurance using the constructor-level sign callback. */
+    public CertificateOfInsuranceResult issueCertificateOfInsurance(
+            String address, CertificateOfInsuranceInput coi) {
+        return issueCertificateOfInsurance(address, coi, null);
+    }
+
+    /**
      * Issue a tokenizable certificate — inserts a node into the on-chain sorted
      * linked list and mints a CIP-68 NFT pair for the recipient.
      *
@@ -696,9 +918,16 @@ public class UVerifyApps {
                     "A TransactionSignCallback is required for issueTokenizableCertificate.");
         }
 
+        Map<String, Object> certBody = new LinkedHashMap<>();
+        certBody.put("hash", input.getCertificate().getHash());
+        if (input.getCertificate().getMetadata() != null) {
+            certBody.put("metadata", input.getCertificate().getMetadata());
+        }
+
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("inserterAddress", address);
-        body.put("key", input.getKey());
+        body.put("type", "CREATE");
+        body.put("senderAddress", address);
+        body.put("certificate", certBody);
         body.put("ownerPubKeyHash", input.getOwnerPubKeyHash());
         body.put("assetName", input.getAssetNameHex());
         body.put("initUtxoTxHash", input.getInitUtxoTxHash());
@@ -706,15 +935,22 @@ public class UVerifyApps {
         if (input.getBootstrapTokenName() != null) {
             body.put("bootstrapTokenName", input.getBootstrapTokenName());
         }
+        if (input.getConfig() != null) {
+            Map<String, Object> configBody = new LinkedHashMap<>();
+            configBody.put("deployer", input.getConfig().getDeployer());
+            configBody.put("allowedInserters", input.getConfig().getAllowedInserters());
+            configBody.put("cip68ScriptAddress", input.getConfig().getCip68ScriptAddress());
+            body.put("config", configBody);
+        }
 
         String unsignedTx = parseJson(
-                ext.rawPost.post("/api/v1/extension/tokenizable-certificate/insert", body),
+                ext.rawPost.post("/api/v1/extension/tokenizable-certificate/build", body),
                 String.class);
         String witnessSet = sign.sign(unsignedTx);
         String txHash = ext.submitFn.submit(unsignedTx, witnessSet);
 
-        return new TokenizableCertificateResult(
-                txHash, input.getKey(), verifyBaseUrl + "/" + input.getKey() + "/" + txHash);
+        String key = input.getCertificate().getHash();
+        return new TokenizableCertificateResult(txHash, key, verifyBaseUrl + "/" + key + "/" + txHash);
     }
 
     /** Issue a tokenizable certificate using the constructor-level sign callback. */
@@ -772,14 +1008,16 @@ public class UVerifyApps {
         }
 
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("claimerAddress", input.getClaimerAddress());
-        body.put("key", input.getKey());
+        body.put("type", "REDEEM");
+        body.put("senderAddress", input.getClaimerAddress());
+        Map<String, Object> certBody = new LinkedHashMap<>();
+        certBody.put("hash", input.getKey());
+        body.put("certificate", certBody);
         body.put("initUtxoTxHash", input.getInitUtxoTxHash());
         body.put("initUtxoOutputIndex", input.getInitUtxoOutputIndex());
-        body.put("assetName", input.getAssetNameHex());
 
         String unsignedTx = parseJson(
-                ext.rawPost.post("/api/v1/extension/tokenizable-certificate/claim", body),
+                ext.rawPost.post("/api/v1/extension/tokenizable-certificate/build", body),
                 String.class);
         String witnessSet = sign.sign(unsignedTx);
         return ext.submitFn.submit(unsignedTx, witnessSet);

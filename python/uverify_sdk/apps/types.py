@@ -149,14 +149,85 @@ class LaboratoryReportResult:
 
 
 @dataclass
+class CertificateOfInsuranceInput:
+    """Input for a Certificate of Insurance (COI)."""
+
+    policy_number: str
+    """Unique policy reference number — used as the on-chain fingerprint."""
+    insurer: str
+    """Name of the issuing insurance company."""
+    insured: str
+    """Name of the insured business or individual (stored as SHA-256 hash on-chain)."""
+    effective_date: str
+    """Policy start date in ISO format (e.g. ``'2025-01-01'``)."""
+    expiration_date: str
+    """Policy end date in ISO format (e.g. ``'2026-01-01'``) — drives VALID/EXPIRED badge."""
+    coverages: Dict[str, str]
+    """Coverage limits keyed by coverage type. Keys get a ``cov_`` prefix automatically.
+    Example: ``{'general_liability': '1,000,000', 'workers_compensation': '500,000'}``"""
+    producer: Optional[str] = None
+    """Name of the insurance broker or agent."""
+    insured_address: Optional[str] = None
+    """Address of the insured (stored as SHA-256 hash on-chain)."""
+    certificate_holder: Optional[str] = None
+    """Name of the party requiring proof of insurance (stored as SHA-256 hash on-chain)."""
+    certificate_holder_address: Optional[str] = None
+    """Address of the certificate holder (stored as SHA-256 hash on-chain)."""
+    additional_insured: Optional[bool] = None
+    """Whether the certificate holder is named as an additional insured."""
+    waiver_of_subrogation: Optional[bool] = None
+    """Whether a waiver of subrogation applies in favour of the certificate holder."""
+
+
+@dataclass
+class CertificateOfInsuranceResult:
+    """Result returned by :meth:`~uverify_sdk.apps.UVerifyApps.issue_certificate_of_insurance`."""
+
+    tx_hash: str
+    """Cardano transaction hash of the issuance transaction."""
+    hash: str
+    """SHA-256 hash of ``policy_number`` — the on-chain certificate fingerprint."""
+    verify_url: str
+    """Verification URL for this certificate."""
+
+
+@dataclass
+class TokenizableConfig:
+    """Configuration embedded in the HEAD datum on the very first Init transaction.
+
+    Only required when no linked list exists yet for the given init UTxO.
+    The ``uverify_validator_hash`` is filled in by the backend; all other fields
+    come from the caller.
+    """
+
+    deployer: str
+    """Payment key hash of the deployer wallet."""
+    allowed_inserters: Optional[List[str]] = None
+    """Payment key hashes of wallets allowed to insert nodes. Empty list means anyone can insert."""
+    cip68_script_address: Optional[str] = None
+    """Hex-encoded CIP-68 script hash. ``None`` disables CIP-68 minting."""
+
+
+@dataclass
+class TokenizableCertificateData:
+    """Certificate fields passed to the tokenizable-certificate extension."""
+
+    hash: str
+    """SHA-256 hash of the certified content — becomes the on-chain node key."""
+    metadata: Optional[str] = None
+    """Optional JSON string of caller-supplied metadata merged on-chain."""
+
+
+@dataclass
 class TokenizableCertificateInput:
     """Input for issuing a tokenizable certificate (NFT-backed on-chain linked list node).
 
     Requires the ``tokenizable-certificate`` backend extension to be enabled.
     """
 
-    key: str
-    """SHA-256 hash of the content being certified — used as the on-chain key."""
+    certificate: TokenizableCertificateData
+    """Certificate to register on-chain. ``hash`` becomes the node key; ``metadata``
+    (JSON string) is merged with backend-generated fields and stored on-chain."""
     owner_pub_key_hash: str
     """Public key hash of the token owner (the recipient of the CIP-68 user NFT)."""
     asset_name_hex: str
@@ -167,6 +238,9 @@ class TokenizableCertificateInput:
     """Output index of the Init UTxO."""
     bootstrap_token_name: Optional[str] = None
     """Bootstrap token name, if this linked list is whitelist-gated."""
+    config: Optional[TokenizableConfig] = None
+    """Config for the HEAD datum — only needed on the very first issuance (Init path).
+    The backend will auto-fill ``uverify_validator_hash``; the caller provides the rest."""
 
 
 @dataclass

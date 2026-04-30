@@ -7,6 +7,9 @@ import io.uverify.sdk.apps.UVerifyApps;
 import io.uverify.sdk.callback.DataSignature;
 import io.uverify.sdk.callback.MessageSignCallback;
 import io.uverify.sdk.callback.TransactionSignCallback;
+import io.uverify.sdk.exception.InsufficientFundsError;
+import io.uverify.sdk.exception.NotFoundError;
+import io.uverify.sdk.exception.RateLimitError;
 import io.uverify.sdk.exception.UVerifyException;
 import io.uverify.sdk.exception.UVerifyTimeoutException;
 import io.uverify.sdk.exception.UVerifyValidationException;
@@ -492,6 +495,10 @@ public class UVerifyClient {
                 String witnessSet = cb.sign(response.getUnsignedTransaction());
                 return submitTransactionInternal(response.getUnsignedTransaction(), witnessSet);
             } catch (UVerifyException e) {
+                if (e.getStatusCode() == 400 && e.getMessage() != null
+                        && e.getMessage().toLowerCase().contains("no utxos found")) {
+                    throw new InsufficientFundsError(e.getMessage(), e.getResponseBody());
+                }
                 lastError = e;
                 if (attempt < maxAttempts) {
                     System.out.printf("Certificate issuance failed (attempt %d/%d), retrying in 5 s (waiting for chain state to propagate) …%n",
@@ -624,17 +631,17 @@ public class UVerifyClient {
             return claimFaucetFundsInternal(new FaucetClaimRequest(challenge, sig.getSignature(), sig.getKey()));
         } catch (UVerifyException e) {
             if (e.getStatusCode() == 404) {
-                throw new UVerifyException(
+                throw new NotFoundError(
                         "Faucet endpoint not found (HTTP 404). " +
                         "The faucet is only available on backends started with FAUCET_ENABLED=true. " +
                         "This feature does not exist on mainnet — acquire ADA from a cryptocurrency exchange instead.",
-                        404, e.getResponseBody());
+                        e.getResponseBody());
             }
             if (e.getStatusCode() == 429) {
-                throw new UVerifyException(
+                throw new RateLimitError(
                         "Faucet cooldown active (HTTP 429). " +
                         "This address recently received testnet funds. Please wait a few minutes before trying again.",
-                        429, e.getResponseBody());
+                        e.getResponseBody());
             }
             throw e;
         }

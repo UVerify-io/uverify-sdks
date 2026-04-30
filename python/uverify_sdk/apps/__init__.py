@@ -10,6 +10,8 @@ import requests as _requests
 
 from ..models.certificate import CertificateData
 from .types import (
+    CertificateOfInsuranceInput,
+    CertificateOfInsuranceResult,
     DigitalProductPassportInput,
     DigitalProductPassportResult,
     DiplomaCertificateResult,
@@ -19,7 +21,9 @@ from .types import (
     LaboratoryReportInput,
     LaboratoryReportResult,
     TokenizableCertificateClaimInput,
+    TokenizableCertificateData,
     TokenizableCertificateInput,
+    TokenizableConfig,
     TokenizableCertificateResult,
     TokenizableCertificateStatus,
 )
@@ -87,7 +91,10 @@ class UVerifyApps:
             )
         if not response.text:
             return None
-        return response.json()
+        try:
+            return response.json()
+        except Exception:
+            return response.text
 
     def _extension_get(self, path: str) -> Any:
         url = f"{self._base_url}{path}"
@@ -308,6 +315,86 @@ class UVerifyApps:
         return LaboratoryReportResult(tx_hash=tx_hash, certificates=certificates)
 
 
+    def issue_certificate_of_insurance(
+        self,
+        address: str,
+        coi: CertificateOfInsuranceInput,
+        sign_tx: Optional[Callable[[str], str]] = None,
+    ) -> CertificateOfInsuranceResult:
+        """
+        Issue a Certificate of Insurance (COI) on-chain.
+
+        The hash is computed as ``sha256(policy_number)``, uniquely identifying this
+        policy. GDPR-sensitive party fields (``insured``, ``insured_address``,
+        ``certificate_holder``, ``certificate_holder_address``) are stored as SHA-256
+        hashes on-chain and revealed as plaintext via URL parameters in the returned
+        ``verify_url``. Policy terms, dates, and coverage limits are stored in plaintext.
+
+        ``coverages`` keys receive a ``cov_`` prefix automatically
+        (e.g. ``general_liability`` → ``cov_general_liability``).
+
+        The update policy is ``restricted`` — only the issuing insurance company wallet
+        may push subsequent updates (e.g. cancellations or renewals).
+
+        Args:
+            address: Cardano address of the signer / payer.
+            coi:     Certificate of Insurance input.
+            sign_tx: Wallet callback; falls back to constructor-level default.
+
+        Returns:
+            :class:`CertificateOfInsuranceResult` with the transaction hash and
+            verification URL.
+        """
+        data_hash = _sha256hex(coi.policy_number)
+        insured_hash = _sha256hex(coi.insured)
+        insured_address_hash = _sha256hex(coi.insured_address) if coi.insured_address is not None else None
+        holder_hash = _sha256hex(coi.certificate_holder) if coi.certificate_holder is not None else None
+        holder_address_hash = _sha256hex(coi.certificate_holder_address) if coi.certificate_holder_address is not None else None
+
+        metadata: dict = {
+            "uverify_template_id": "certificateOfInsurance",
+            "uverify_update_policy": "restricted",
+            "issuer": coi.insurer,
+            "uv_url_insured": insured_hash,
+            "policy_number": coi.policy_number,
+            "effective_date": coi.effective_date,
+            "expiration_date": coi.expiration_date,
+        }
+        if coi.producer is not None:
+            metadata["producer"] = coi.producer
+        if insured_address_hash is not None:
+            metadata["uv_url_insured_address"] = insured_address_hash
+        if holder_hash is not None:
+            metadata["uv_url_certificate_holder"] = holder_hash
+        if holder_address_hash is not None:
+            metadata["uv_url_certificate_holder_address"] = holder_address_hash
+        if coi.additional_insured is not None:
+            metadata["additional_insured"] = str(coi.additional_insured).lower()
+        if coi.waiver_of_subrogation is not None:
+            metadata["waiver_of_subrogation"] = str(coi.waiver_of_subrogation).lower()
+        for key, value in coi.coverages.items():
+            metadata[f"cov_{key}"] = value
+
+        tx_hash = self._issue(
+            address,
+            [CertificateData(hash=data_hash, algorithm="SHA-256", metadata=metadata)],
+            sign_tx,
+        )
+
+        params: dict = {"insured": coi.insured}
+        if coi.insured_address is not None:
+            params["insured_address"] = coi.insured_address
+        if coi.certificate_holder is not None:
+            params["certificate_holder"] = coi.certificate_holder
+        if coi.certificate_holder_address is not None:
+            params["certificate_holder_address"] = coi.certificate_holder_address
+
+        verify_url = (
+            f"{self._verify_base_url}/{data_hash}/{tx_hash}"
+            f"?{urlencode(params)}"
+        )
+        return CertificateOfInsuranceResult(tx_hash=tx_hash, hash=data_hash, verify_url=verify_url)
+
     def issue_tokenizable_certificate(
         self,
         address: str,
@@ -322,7 +409,7 @@ class UVerifyApps:
 
         Args:
             address:  Cardano address of the inserter / fee payer.
-            input:    Certificate parameters (key, owner, asset name, init UTxO).
+            input:    Certificate parameters (certificate, owner, asset name, init UTxO).
             sign_tx:  Wallet callback; falls back to constructor-level default.
 
         Returns:
@@ -332,9 +419,14 @@ class UVerifyApps:
         self._require_extension_support("issue_tokenizable_certificate")
         sign = sign_tx or self._default_sign_tx
 
-        body = {
-            "inserterAddress": address,
-            "key": input.key,
+        cert_body: Dict[str, Any] = {"hash": input.certificate.hash}
+        if input.certificate.metadata is not None:
+            cert_body["metadata"] = input.certificate.metadata
+
+        body: Dict[str, Any] = {
+            "type": "CREATE",
+            "senderAddress": address,
+            "certificate": cert_body,
             "ownerPubKeyHash": input.owner_pub_key_hash,
             "assetName": input.asset_name_hex,
             "initUtxoTxHash": input.init_utxo_tx_hash,
@@ -342,17 +434,23 @@ class UVerifyApps:
         }
         if input.bootstrap_token_name is not None:
             body["bootstrapTokenName"] = input.bootstrap_token_name
+        if input.config is not None:
+            body["config"] = {
+                "deployer": input.config.deployer,
+                "allowedInserters": input.config.allowed_inserters or [],
+                "cip68ScriptAddress": input.config.cip68_script_address,
+            }
 
         unsigned_tx = self._extension_post(
-            "/api/v1/extension/tokenizable-certificate/insert", body
+            "/api/v1/extension/tokenizable-certificate/build", body
         )
         witness_set = sign(unsigned_tx)
         tx_hash = self._submit_fn(unsigned_tx, witness_set)
 
         return TokenizableCertificateResult(
             tx_hash=tx_hash,
-            key=input.key,
-            verify_url=f"{self._verify_base_url}/{input.key}/{tx_hash}",
+            key=input.certificate.hash,
+            verify_url=f"{self._verify_base_url}/{input.certificate.hash}/{tx_hash}",
         )
 
     def get_tokenizable_certificate_status(
@@ -399,7 +497,7 @@ class UVerifyApps:
         Requires the ``tokenizable-certificate`` backend extension to be enabled.
 
         Args:
-            input:    Claim parameters (key, claimer address, init UTxO, asset name).
+            input:    Claim parameters (key, claimer address, init UTxO).
             sign_tx:  Wallet callback; falls back to constructor-level default.
 
         Returns:
@@ -409,13 +507,13 @@ class UVerifyApps:
         sign = sign_tx or self._default_sign_tx
 
         unsigned_tx = self._extension_post(
-            "/api/v1/extension/tokenizable-certificate/claim",
+            "/api/v1/extension/tokenizable-certificate/build",
             {
-                "claimerAddress": input.claimer_address,
-                "key": input.key,
+                "type": "REDEEM",
+                "senderAddress": input.claimer_address,
+                "certificate": {"hash": input.key},
                 "initUtxoTxHash": input.init_utxo_tx_hash,
                 "initUtxoOutputIndex": input.init_utxo_output_index,
-                "assetName": input.asset_name_hex,
             },
         )
         witness_set = sign(unsigned_tx)
@@ -432,6 +530,10 @@ __all__ = [
     "LaboratoryReportInput",
     "LaboratoryReportResult",
     "LaboratoryReportCertificateResult",
+    "CertificateOfInsuranceInput",
+    "CertificateOfInsuranceResult",
+    "TokenizableConfig",
+    "TokenizableCertificateData",
     "TokenizableCertificateInput",
     "TokenizableCertificateResult",
     "TokenizableCertificateStatus",
