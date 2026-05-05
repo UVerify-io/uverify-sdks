@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/UVerify-io/uverify-sdks/compare/python-v0.1.5...python-v0.1.6) (2026-05-05)
+
+
+### Features
+
+* add new error types and tokenizable certificates also for Python and Java ([32eea6c](https://github.com/UVerify-io/uverify-sdks/commit/32eea6c161cf8a24f33731478fabf3c4bf186763))
+
 ## [0.1.5](https://github.com/UVerify-io/uverify-sdks/compare/python-v0.1.4...python-v0.1.5) (2026-04-01)
 
 
