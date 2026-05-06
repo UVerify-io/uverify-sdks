@@ -387,7 +387,7 @@ class UVerifyClient:
         """
         cb = self._resolve_sign_tx(sign_tx)
         request = BuildTransactionRequest(
-            type="default" if state_id else "bootstrap",
+            type="default",
             address=address,
             certificates=certificates,
             state_id=state_id,

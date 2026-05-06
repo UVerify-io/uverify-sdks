@@ -183,10 +183,10 @@ def test_core_execute_user_action():
 # ---------------------------------------------------------------------------
 
 @responses_lib.activate
-def test_issue_certificates_bootstrap_flow():
+def test_issue_certificates_sends_default_type_without_state_id():
     responses_lib.add(
         responses_lib.POST, f"{BASE_URL}/api/v1/transaction/build",
-        json={"unsignedTransaction": "unsigned-cbor", "type": "bootstrap",
+        json={"unsignedTransaction": "unsigned-cbor", "type": "default",
               "status": {"message": "ok", "code": 200}},
         status=200)
     responses_lib.add(
@@ -199,6 +199,35 @@ def test_issue_certificates_bootstrap_flow():
         sign_tx=sign_tx_stub,
     )
     assert len(responses_lib.calls) == 2
+    body = _json.loads(responses_lib.calls[0].request.body)
+    assert body["type"] == "default"
+
+
+@responses_lib.activate
+def test_issue_certificates_metadata_dict_is_serialized_to_string():
+    responses_lib.add(
+        responses_lib.POST, f"{BASE_URL}/api/v1/transaction/build",
+        json={"unsignedTransaction": "unsigned-cbor", "type": "default",
+              "status": {"message": "ok", "code": 200}},
+        status=200)
+    responses_lib.add(
+        responses_lib.POST, f"{BASE_URL}/api/v1/transaction/submit",
+        json={"transactionHash": "mock-tx-hash"}, status=200)
+
+    UVerifyClient().issue_certificates(
+        address="addr1...",
+        certificates=[CertificateData(
+            hash="h1",
+            algorithm="SHA-256",
+            metadata={"uverify_template_id": "diploma", "name": "Alice"},
+        )],
+        sign_tx=sign_tx_stub,
+    )
+    body = _json.loads(responses_lib.calls[0].request.body)
+    cert = body["certificates"][0]
+    assert isinstance(cert["metadata"], str)
+    parsed = _json.loads(cert["metadata"])
+    assert parsed["uverify_template_id"] == "diploma"
 
 
 @responses_lib.activate
