@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.8](https://github.com/UVerify-io/uverify-sdks/compare/typescript-v0.1.7...typescript-v0.1.8) (2026-04-30)
+
+
+### Features
+
+* add new error types and tokenizable certificates also for Python and Java ([32eea6c](https://github.com/UVerify-io/uverify-sdks/commit/32eea6c161cf8a24f33731478fabf3c4bf186763))
+
 ## [0.1.7](https://github.com/UVerify-io/uverify-sdks/compare/typescript-v0.1.6...typescript-v0.1.7) (2026-04-01)
 
 
