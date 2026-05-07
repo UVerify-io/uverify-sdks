@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/UVerify-io/uverify-sdks/compare/python-v0.1.6...python-v0.1.7) (2026-05-06)
+
+
+### Bug Fixes
+
+* sending correct certificate type when state id is none and not always bootstrap. Fixes [#33](https://github.com/UVerify-io/uverify-sdks/issues/33) ([f1ab1bb](https://github.com/UVerify-io/uverify-sdks/commit/f1ab1bbedbcebfb91243ca87132a997d407f70be))
+
 ## [0.1.6](https://github.com/UVerify-io/uverify-sdks/compare/python-v0.1.5...python-v0.1.6) (2026-05-05)
 
 
