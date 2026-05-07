@@ -25,7 +25,21 @@ BASE_URL = "https://api.preprod.uverify.io"
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Current backend shape (paymentCredential / transactionId / extra)
 CERT_DICT = {
+    "hash": "abc123",
+    "paymentCredential": "deadbeef",
+    "blockHash": "bh1",
+    "blockNumber": 100,
+    "transactionId": "tx1",
+    "slot": 50000,
+    "creationTime": "2024-01-01T00:00:00Z",
+    "extra": '{"note":"test"}',
+    "issuer": "issuer1",
+}
+
+# Legacy backend shape (address / transactionHash / metadata)
+CERT_DICT_LEGACY = {
     "hash": "abc123",
     "address": "addr1...",
     "blockHash": "bh1",
@@ -70,6 +84,18 @@ def test_verify_returns_certificate_list():
     assert len(result) == 1
     assert result[0].hash == "abc123"
     assert result[0].transaction_hash == "tx1"
+    assert result[0].address == "deadbeef"
+    assert result[0].metadata == '{"note":"test"}'
+
+
+@responses_lib.activate
+def test_verify_returns_certificate_list_legacy_shape():
+    responses_lib.add(responses_lib.GET, f"{BASE_URL}/api/v1/verify/abc123",
+                      json=[CERT_DICT_LEGACY], status=200)
+    result = UVerifyClient().verify("abc123")
+    assert result[0].address == "addr1..."
+    assert result[0].transaction_hash == "tx1"
+    assert result[0].metadata is None
 
 
 @responses_lib.activate
@@ -111,6 +137,18 @@ def test_verify_by_transaction_returns_certificate():
     cert = UVerifyClient().verify_by_transaction("tx1", "h1")
     assert cert.transaction_hash == "tx1"
     assert cert.hash == "abc123"
+    assert cert.address == "deadbeef"
+
+
+@responses_lib.activate
+def test_verify_by_transaction_returns_certificate_legacy_shape():
+    responses_lib.add(
+        responses_lib.GET,
+        f"{BASE_URL}/api/v1/verify/by-transaction-hash/tx1/h1",
+        json=CERT_DICT_LEGACY, status=200)
+    cert = UVerifyClient().verify_by_transaction("tx1", "h1")
+    assert cert.transaction_hash == "tx1"
+    assert cert.address == "addr1..."
 
 
 # ---------------------------------------------------------------------------

@@ -42,13 +42,19 @@ class CertificateResponse:
 
     Attributes:
         hash:             SHA-256 or SHA-512 hash of the certified data.
-        address:          Cardano address that issued the certificate.
+        address:          Payment credential (key hash) of the issuing wallet.
+                          Populated from ``paymentCredential`` on current backends
+                          or ``address`` on older ones.
         block_hash:       Hash of the containing block.
         block_number:     Block height.
         transaction_hash: Cardano transaction hash.
+                          Populated from ``transactionId`` on current backends
+                          or ``transactionHash`` on older ones.
         slot:             Slot number.
         creation_time:    ISO-8601 timestamp.
         metadata:         Optional attached metadata.
+                          Populated from ``extra`` on current backends
+                          or ``metadata`` on older ones.
         issuer:           Optional issuer identifier.
     """
 
@@ -66,12 +72,12 @@ class CertificateResponse:
     def from_dict(cls, data: dict) -> "CertificateResponse":
         return cls(
             hash=data["hash"],
-            address=data["address"],
+            address=data.get("paymentCredential") or data["address"],
             block_hash=data["blockHash"],
             block_number=data["blockNumber"],
-            transaction_hash=data["transactionHash"],
+            transaction_hash=data.get("transactionId") or data["transactionHash"],
             slot=data["slot"],
             creation_time=data["creationTime"],
-            metadata=data.get("metadata"),
+            metadata=data.get("extra") or data.get("metadata"),
             issuer=data.get("issuer"),
         )
