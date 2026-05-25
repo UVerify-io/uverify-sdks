@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.8](https://github.com/UVerify-io/uverify-sdks/compare/python-v0.1.7...python-v0.1.8) (2026-05-07)
+
+
+### Bug Fixes
+
+* add a fallback for old field names of the certificate response ([83aa60c](https://github.com/UVerify-io/uverify-sdks/commit/83aa60c346acfac979f86d1a0a43ce36d6b6fcf0))
+
 ## [0.1.7](https://github.com/UVerify-io/uverify-sdks/compare/python-v0.1.6...python-v0.1.7) (2026-05-06)
 
 
