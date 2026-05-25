@@ -9,6 +9,8 @@ import type {
   LaboratoryReportResult,
   CertificateOfInsuranceInput,
   CertificateOfInsuranceResult,
+  AgentReceiptInput,
+  AgentReceiptResult,
   TokenizableCertificateInput,
   TokenizableCertificateResult,
   TokenizableCertificateStatus,
@@ -363,6 +365,55 @@ export class UVerifyApps {
       txHash,
       hash,
       verifyUrl: `${this.verifyBaseUrl}/${hash}/${txHash}?${params}`,
+    };
+  }
+
+  /**
+   * Issue an Agent Receipt — an immutable on-chain record that an AI agent
+   * completed a transaction under a specific set of Legal Context Protocol (LCP) terms.
+   *
+   * The hash is computed as `sha256(transactionId)`, uniquely identifying this
+   * receipt. All LCP fields (terms URL, ATR hash, trust level, dispute resolution)
+   * are stored in plaintext so any verifier can independently confirm the terms
+   * that governed the transaction.
+   *
+   * The update policy is set to `first` — receipts are permanent and immutable.
+   */
+  async issueAgentReceipt(
+    address: string,
+    receipt: AgentReceiptInput,
+    signCallback?: TransactionSignCallback,
+  ): Promise<AgentReceiptResult> {
+    // The atrHash is the SHA-256 of the terms document — use it directly as the
+    // on-chain fingerprint so the UVerify record IS the blockchain proof of the terms.
+    const hash = receipt.atrHash.startsWith('0x') ? receipt.atrHash.slice(2) : receipt.atrHash;
+
+    const metadata: Record<string, string> = {
+      uverify_template_id: 'agentReceipt',
+      uverify_update_policy: 'first',
+      // LCP spec field names
+      terms: receipt.terms,
+      transaction_id: receipt.transactionId,
+      ...(receipt.termsFormat !== undefined ? { termsFormat: receipt.termsFormat } : {}),
+      ...(receipt.acceptanceRequired ? { acceptanceRequired: 'true' } : {}),
+      ...(receipt.returns !== undefined ? { returns: receipt.returns } : {}),
+      ...(receipt.api !== undefined ? { api: receipt.api } : {}),
+      ...(receipt.contact !== undefined ? { contact: JSON.stringify(receipt.contact) } : {}),
+      ...(receipt.disputeResolution !== undefined ? { disputeResolution: JSON.stringify(receipt.disputeResolution) } : {}),
+      // Non-spec additions
+      ...(receipt.agentName !== undefined ? { agent_name: receipt.agentName } : {}),
+    };
+
+    const txHash = await this.issue(
+      address,
+      [{ hash, algorithm: 'SHA-256', metadata }],
+      signCallback,
+    );
+
+    return {
+      txHash,
+      hash,
+      verifyUrl: `${this.verifyBaseUrl}/${hash}/${txHash}`,
     };
   }
 

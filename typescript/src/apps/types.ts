@@ -249,6 +249,76 @@ export interface TokenizableCertificateStatus {
 }
 
 /**
+ * Input for an Agent Receipt — an on-chain record that a transaction occurred
+ * under a specific set of Legal Context Protocol (LCP) terms.
+ *
+ * Field names match the LCP discovery document (`/.well-known/legal-context.json`) directly.
+ */
+/**
+ * Input for an Agent Receipt — an on-chain record that a transaction occurred
+ * under a specific set of Legal Context Protocol (LCP) terms.
+ *
+ * Field names match the LCP discovery document (`/.well-known/legal-context.json`) directly.
+ * The LCP trust level is derived from the fields present: `atrHash` alone = Level 2,
+ * `acceptanceRequired: true` = Level 3, `disputeResolution` or `api` present = Level 4.
+ */
+export interface AgentReceiptInput {
+  /** Unique commerce transaction ID — the on-chain fingerprint is derived from `atrHash`, this is stored as metadata. */
+  transactionId: string;
+  /** Absolute HTTPS URL of the legal terms document (LCP: `terms`). */
+  terms: string;
+  /**
+   * SHA-256 hash of the terms document, `0x`-prefixed (LCP: `atrHash`).
+   * UVerify anchors this on Cardano, making every receipt at least Level 2 (Provable).
+   */
+  atrHash: string;
+  /** Format of the terms document (LCP: `termsFormat`). Known values: `'markdown'`, `'json'`, `'pdf'`, `'plain'`, `'html'`. */
+  termsFormat?: string;
+  /** Whether explicit acceptance was required (LCP: `acceptanceRequired`). Signals Level 3. */
+  acceptanceRequired?: boolean;
+  /** URL of a returns or claims API/process (LCP: `returns`). Optional. */
+  returns?: string;
+  /** Contact information for the service (LCP: `contact`). Optional. */
+  contact?: {
+    /** Legal department contact. */
+    legal?: string;
+    /** Technical support contact. */
+    technical?: string;
+  };
+  /** URL of a legal context API — presence signals Level 4 (LCP: `api`). Optional. */
+  api?: string;
+  /** Dispute resolution details — presence signals Level 4 (LCP: `disputeResolution`). Optional. */
+  disputeResolution?: {
+    /** Dispute resolution method (e.g. `'AAA Commercial Arbitration Rules'`). */
+    method?: string;
+    /** Governing jurisdiction (e.g. `'New York, USA'`). */
+    jurisdiction?: string;
+    /** Contact for dispute filing (email or URL). */
+    contact?: string;
+    /** Content-addressed identifier of the dispute resolution clause. Format: `sha256:0x<hex>`. */
+    clauseId?: string;
+    /** URL where the dispute resolution clause text can be retrieved. */
+    source?: string;
+    /** URL of the dispute resolution provider's service catalog. */
+    catalog?: string;
+  };
+  /** Display name of the agent that performed the transaction. Not in LCP spec. Optional. */
+  agentName?: string;
+}
+
+/**
+ * Result returned by {@link UVerifyApps.issueAgentReceipt}.
+ */
+export interface AgentReceiptResult {
+  /** Cardano transaction hash of the issuance transaction. */
+  txHash: string;
+  /** SHA-256 hash of `transactionId` — the on-chain receipt fingerprint. */
+  hash: string;
+  /** Verification URL for this receipt. */
+  verifyUrl: string;
+}
+
+/**
  * Input for claiming (redeeming) a tokenizable certificate.
  */
 export interface TokenizableCertificateClaimInput {
