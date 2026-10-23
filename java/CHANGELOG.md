@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/UVerify-io/uverify-sdks/compare/java-v0.1.6...java-v0.1.7) (2026-10-23)
+
+
+### Bug Fixes
+
+* send bootstrapDatum.name when issuing certificates under a state ([b95b3c6](https://github.com/UVerify-io/uverify-sdks/commit/b95b3c63527ec971d99c99894649e0f693d6ab9b))
+
 ## [0.1.6](https://github.com/UVerify-io/uverify-sdks/compare/java-v0.1.5...java-v0.1.6) (2026-05-05)
 
 
