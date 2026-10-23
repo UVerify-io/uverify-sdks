@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.9](https://github.com/UVerify-io/uverify-sdks/compare/typescript-v0.1.8...typescript-v0.1.9) (2026-10-23)
+
+
+### Features
+
+* add agent receipt function ([f875662](https://github.com/UVerify-io/uverify-sdks/commit/f875662c54e749c7ca6e83070a4ed3653d6357e2))
+
+
+### Bug Fixes
+
+* send bootstrapDatum.name when issuing certificates under a state ([b95b3c6](https://github.com/UVerify-io/uverify-sdks/commit/b95b3c63527ec971d99c99894649e0f693d6ab9b))
+
 ## [0.1.8](https://github.com/UVerify-io/uverify-sdks/compare/typescript-v0.1.7...typescript-v0.1.8) (2026-04-30)
 
 
