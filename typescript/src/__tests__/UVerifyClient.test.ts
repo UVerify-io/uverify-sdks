@@ -495,6 +495,7 @@ describe('UVerifyClient', () => {
 
       const buildBody = JSON.parse((fetch.mock.calls[0][1] as RequestInit).body as string);
       expect(buildBody.stateId).toBe('my-state');
+      expect(buildBody.bootstrapDatum).toEqual({ name: 'my-state' });
     });
 
     it('serializes object metadata to a JSON string before sending', async () => {

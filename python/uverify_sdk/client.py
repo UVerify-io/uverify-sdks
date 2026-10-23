@@ -386,10 +386,13 @@ class UVerifyClient:
             )
         """
         cb = self._resolve_sign_tx(sign_tx)
+        # The backend selects the bootstrap datum to fork from or update through
+        # bootstrapDatum.name, state_id alone is ignored for default builds.
         request = BuildTransactionRequest(
             type="default",
             address=address,
             certificates=certificates,
+            bootstrap_datum={"name": state_id} if state_id else None,
             state_id=state_id,
         )
         max_attempts = 3
@@ -405,8 +408,8 @@ class UVerifyClient:
                 last_error = exc
                 if attempt < max_attempts:
                     print(
-                        f"Certificate issuance failed (attempt {attempt}/{max_attempts}), "
-                        "retrying in 5 s (waiting for chain state to propagate) …"
+                        f"Certificate issuance failed (attempt {attempt}/{max_attempts}): "
+                        f"HTTP {exc.status_code} {exc}. Retrying in 5 s (waiting for chain state to propagate) …"
                     )
                     time.sleep(5)
         raise last_error  # type: ignore[misc]

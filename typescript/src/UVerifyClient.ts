@@ -435,7 +435,10 @@ export class UVerifyClient {
    * {@link buildTransaction} and {@link submitTransaction} separately.
    *
    * @param address      Cardano address of the signer / payer.
-   * @param stateId      ID of the issuing state.
+   * @param stateId      Token name of the bootstrap datum to issue under. The
+   *                     wallet forks a state from it on first use and reuses
+   *                     that state afterwards. Omit to let the backend pick
+   *                     the cheapest public bootstrap datum.
    * @param certificates One or more certificates to certify.
    * @param signCallback Callback that receives the unsigned transaction and
    *                     returns the CIP-30 witness set CBOR hex.
@@ -476,6 +479,9 @@ export class UVerifyClient {
           type: 'default',
           address,
           stateId,
+          // The backend picks the bootstrap datum to fork from or update by
+          // its token name in bootstrapDatum.name, stateId alone is ignored.
+          ...(stateId ? { bootstrapDatum: { name: stateId } } : {}),
           certificates,
         });
         const witnessSet = await cb(unsignedTransaction);
@@ -484,8 +490,8 @@ export class UVerifyClient {
         lastError = err;
         if (err instanceof UVerifyApiError && !(err instanceof InsufficientFundsError) && attempt < maxAttempts) {
           console.log(
-            `Certificate issuance failed (attempt ${attempt}/${maxAttempts}), ` +
-              `retrying in 5 s (waiting for chain state to propagate) …`
+            `Certificate issuance failed (attempt ${attempt}/${maxAttempts}): ` +
+              `HTTP ${err.statusCode} ${err.message}. Retrying in 5 s (waiting for chain state to propagate) …`
           );
           await new Promise<void>((resolve) => setTimeout(resolve, 5_000));
         } else {

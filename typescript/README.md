@@ -108,7 +108,7 @@ const txHash = await client.issueCertificates(address, [
 console.log('Certified at tx:', txHash);
 ```
 
-Optionally pass a `stateId` as the last argument to issue under a specific state:
+Optionally pass the token name of a bootstrap datum as the last argument. The wallet forks its state from that datum on first use (needed for larger batch sizes or partner datums) and reuses it afterwards:
 
 ```ts
 const txHash = await client.issueCertificates(

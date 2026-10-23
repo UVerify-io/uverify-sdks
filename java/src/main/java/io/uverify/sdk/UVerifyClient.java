@@ -458,7 +458,7 @@ public class UVerifyClient {
     }
 
     /**
-     * Issue certificates using the bootstrap flow with the constructor-level callback.
+     * Issue certificates under the cheapest public bootstrap datum with the constructor-level callback.
      *
      * @return The Cardano transaction hash of the submitted transaction.
      * @throws UVerifyValidationException if no sign callback was configured.
@@ -471,7 +471,8 @@ public class UVerifyClient {
      * Issue certificates into an existing state.
      *
      * @param address      Cardano address of the signer.
-     * @param stateId      Existing state ID ({@code null} triggers bootstrap flow).
+     * @param stateId      Token name of the bootstrap datum to issue under ({@code null}
+     *                     lets the backend pick the cheapest public one).
      * @param certificates Certificates to issue.
      * @param signTx       Wallet callback ({@code null} uses constructor-level default).
      * @return The Cardano transaction hash of the submitted transaction.
@@ -482,11 +483,11 @@ public class UVerifyClient {
             List<CertificateData> certificates,
             TransactionSignCallback signTx) {
         TransactionSignCallback cb = resolveSignTx(signTx);
-        BuildTransactionRequest request = stateId != null
-                ? BuildTransactionRequest.defaultRequest(
-                        address, stateId, certificates.toArray(new CertificateData[0]))
-                : BuildTransactionRequest.bootstrapRequest(
-                        address, null, certificates.toArray(new CertificateData[0]));
+        // Always a default build: the backend forks a state from the cheapest
+        // public bootstrap datum on its own. A bootstrap-typed request creates
+        // a new bootstrap datum and is reserved for whitelisted admin wallets.
+        BuildTransactionRequest request = BuildTransactionRequest.defaultRequest(
+                address, stateId, certificates.toArray(new CertificateData[0]));
         int maxAttempts = 3;
         UVerifyException lastError = null;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -501,8 +502,8 @@ public class UVerifyClient {
                 }
                 lastError = e;
                 if (attempt < maxAttempts) {
-                    System.out.printf("Certificate issuance failed (attempt %d/%d), retrying in 5 s (waiting for chain state to propagate) …%n",
-                            attempt, maxAttempts);
+                    System.out.printf("Certificate issuance failed (attempt %d/%d): HTTP %d %s. Retrying in 5 s (waiting for chain state to propagate) …%n",
+                            attempt, maxAttempts, e.getStatusCode(), e.getMessage());
                     try {
                         Thread.sleep(5_000);
                     } catch (InterruptedException ie) {

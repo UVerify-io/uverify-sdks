@@ -50,7 +50,9 @@ public class BuildTransactionRequest {
      * Build a {@code default} certificate issuance request.
      *
      * @param address      Cardano address of the signer.
-     * @param stateId      Existing state ID.
+     * @param stateId      Token name of the bootstrap datum to issue under, or
+     *                     {@code null} to let the backend pick the cheapest public one.
+     *                     The backend reads it from {@code bootstrapDatum.name}.
      * @param certificates Certificates to issue.
      */
     public static BuildTransactionRequest defaultRequest(
@@ -59,6 +61,9 @@ public class BuildTransactionRequest {
         r.setType(TransactionType.DEFAULT.toString());
         r.setAddress(address);
         r.setStateId(stateId);
+        if (stateId != null) {
+            r.setBootstrapDatum(Map.of("name", stateId));
+        }
         r.setCertificates(Arrays.asList(certificates));
         return r;
     }

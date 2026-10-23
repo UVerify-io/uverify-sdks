@@ -288,6 +288,7 @@ def test_issue_certificates_with_state_id():
     body = _json.loads(responses_lib.calls[0].request.body)
     assert body["type"] == "default"
     assert body["stateId"] == "state-123"
+    assert body["bootstrapDatum"] == {"name": "state-123"}
 
 
 @responses_lib.activate
