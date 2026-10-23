@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.9](https://github.com/UVerify-io/uverify-sdks/compare/python-v0.1.8...python-v0.1.9) (2026-10-23)
+
+
+### Bug Fixes
+
+* send bootstrapDatum.name when issuing certificates under a state ([b95b3c6](https://github.com/UVerify-io/uverify-sdks/commit/b95b3c63527ec971d99c99894649e0f693d6ab9b))
+
 ## [0.1.8](https://github.com/UVerify-io/uverify-sdks/compare/python-v0.1.7...python-v0.1.8) (2026-05-07)
 
 
